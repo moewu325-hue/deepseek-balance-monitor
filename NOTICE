@@ -1,0 +1,20 @@
+DeepSeek Balance Monitor notices
+================================
+
+Icon asset
+----------
+
+`assets/deepseek_icon.ico` is original project artwork created with OpenAI's built-in image generation.
+The generation prompt asked for a simple, high-contrast desktop utility icon:
+a cyan-blue balance gauge crossed by a clean data pulse on a removable solid-color
+background, with no text, brand mark, or DeepSeek logo.
+Post-processing removed the chroma background and used Pillow to convert
+the transparent artwork into ICO frames at 16, 24, 32, 48, 64, 128, and 256
+pixels. The project claims rights only in this original asset and its edits.
+
+Trademark
+---------
+
+DeepSeek and related names are trademarks of their respective owner. Their use
+describes compatibility only. This project is not affiliated with, sponsored
+by, endorsed by, or an official product of DeepSeek.

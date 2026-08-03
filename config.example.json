@@ -1,0 +1,11 @@
+{
+  "refresh_interval": 60,
+  "window_x": null,
+  "window_y": null,
+  "opacity": 0.9,
+  "low_balance_warning": "10.00",
+  "currency": "CNY",
+  "snap_edge": null,
+  "collapsed": false,
+  "auto_start": false
+}
