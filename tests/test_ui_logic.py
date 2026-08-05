@@ -52,8 +52,9 @@ from deepseek_balance_monitor.storage import (
 SECRET = "sk-ui-synthetic-secret"
 
 
-def info(currency: str, total: str) -> BalanceInfo:
-    return BalanceInfo(currency, Decimal(total), Decimal("0"), Decimal(total))
+def info(currency: str, total: str, topped: str | None = None) -> BalanceInfo:
+    topped_balance = total if topped is None else topped
+    return BalanceInfo(currency, Decimal(total), Decimal("0"), Decimal(topped_balance))
 
 
 class FakeProbeApi:
@@ -140,13 +141,19 @@ class FakeRoot:
 
 class BalanceDisplayTests(unittest.TestCase):
     def test_preferred_currency_and_known_symbols_are_displayed_without_sum(self) -> None:
-        snapshot = BalanceSnapshot(True, (info("USD", "3.25"), info("CNY", "8.50")))
+        snapshot = BalanceSnapshot(
+            True,
+            (info("USD", "3.25"), info("CNY", "8.50", topped="4.25")),
+        )
 
         cny = build_balance_display(snapshot, "CNY")
         usd = build_balance_display(snapshot, "USD")
 
         self.assertEqual((cny.currency, cny.balance_text), ("CNY", "¥8.50"))
         self.assertEqual((usd.currency, usd.balance_text), ("USD", "$3.25"))
+        self.assertEqual(cny.topped_up_balance, Decimal("4.25"))
+        self.assertEqual(cny.topped_up_text, "¥4.25")
+        self.assertTrue(cny.available)
         self.assertNotIn("11.75", repr((cny, usd)))
 
     def test_unknown_currency_displays_code_before_amount(self) -> None:

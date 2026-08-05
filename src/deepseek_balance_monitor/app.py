@@ -10,7 +10,7 @@ from queue import Empty, Full, Queue
 import threading
 from typing import Any, Callable
 
-from .api import ApiClient, currency_symbol, select_currency
+from .api import ApiClient
 from .controller import BalanceController, ControllerEventKind, ControllerUpdate
 from .credentials import (
     CredentialCandidate,
@@ -18,7 +18,13 @@ from .credentials import (
     DiscoveryResult,
     WindowsCredentialStore,
 )
-from .models import BalanceSnapshot, ProbeResult, ProbeStatus
+from .models import ProbeResult, ProbeStatus
+from .presentation import (
+    ESTIMATED_DECREASE_LABEL,
+    BalanceDisplay,
+    build_balance_display,
+    format_estimated_decrease,
+)
 from .storage import (
     AppConfig,
     AppPaths,
@@ -31,16 +37,8 @@ from .storage import (
 )
 
 
-ESTIMATED_DECREASE_LABEL = "今日余额减少（估算）"
 HISTORY_RETENTION_LIMIT = 10_000
 _CLICK_INTERVAL_MS = 400
-
-
-@dataclass(frozen=True)
-class BalanceDisplay:
-    currency: str
-    total_balance: Decimal
-    balance_text: str
 
 
 @dataclass(frozen=True)
@@ -643,23 +641,6 @@ class BubbleApp:
             raise RuntimeError("Tk 操作必须在主线程执行。")
 
 
-def build_balance_display(snapshot: BalanceSnapshot, preferred: str) -> BalanceDisplay:
-    try:
-        selected = select_currency(snapshot, preferred)
-    except ValueError as error:
-        raise ValueError("首选币种不可用，无法确定显示金额。") from error
-    currency = selected.currency.strip().upper()
-    return BalanceDisplay(
-        currency,
-        selected.total_balance,
-        _format_currency_amount(currency, selected.total_balance),
-    )
-
-
-def format_estimated_decrease(currency: str, amount: Decimal) -> str:
-    return f"{ESTIMATED_DECREASE_LABEL}：{_format_currency_amount(currency, amount)}"
-
-
 def update_usage(
     log: UsageLog,
     currency: str,
@@ -921,16 +902,6 @@ def run_app() -> int:
                 pass
             active_app[0].wait_for_shutdown()
     return 0
-
-
-def _format_currency_amount(currency: str, amount: Decimal) -> str:
-    code = _normalize_currency(currency)
-    value = _finite_decimal(amount)
-    rendered = f"{value:.2f}"
-    symbol = currency_symbol(code)
-    if symbol == code:
-        return f"{code} {rendered}"
-    return f"{symbol}{rendered}"
 
 
 def _normalize_currency(currency: str) -> str:
