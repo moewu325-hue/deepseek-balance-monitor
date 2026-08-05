@@ -121,25 +121,85 @@ class FakeClock:
 
 
 class Event:
-    def __init__(self, x: int, y: int) -> None:
+    def __init__(self, x: int, y: int, *, x_root: int | None = None, y_root: int | None = None) -> None:
         self.x = x
         self.y = y
+        self.x_root = x if x_root is None else x_root
+        self.y_root = y if y_root is None else y_root
 
 
 class CallbackLog:
     def __init__(self) -> None:
         self.collapsed: list[bool] = []
         self.positions: list[tuple[int, int, bool]] = []
+        self.exit_calls = 0
+        self.refresh_calls = 0
+        self.console_calls = 0
+        self.autostart: list[bool] = []
 
     def build(self) -> CanvasCallbacks:
         return CanvasCallbacks(
-            refresh=lambda: None,
-            open_console=lambda: None,
-            request_exit=lambda: None,
+            refresh=self._refresh,
+            open_console=self._console,
+            request_exit=self._exit,
             set_collapsed=self.collapsed.append,
             save_position=lambda x, y, collapsed: self.positions.append((x, y, collapsed)),
-            set_autostart=lambda _value: None,
+            set_autostart=self.autostart.append,
         )
+
+    def _exit(self) -> None:
+        self.exit_calls += 1
+
+    def _refresh(self) -> None:
+        self.refresh_calls += 1
+
+    def _console(self) -> None:
+        self.console_calls += 1
+
+
+class FakeVariable:
+    def __init__(self, value: bool = False) -> None:
+        self.value = value
+
+    def get(self) -> bool:
+        return self.value
+
+    def set(self, value: bool) -> None:
+        self.value = bool(value)
+
+
+class FakeMenu:
+    def __init__(self, _root: object, **_options: object) -> None:
+        self.entries: list[dict[str, object]] = []
+        self.popup: tuple[int, int] | None = None
+
+    def add_command(self, **options: object) -> None:
+        self.entries.append({"kind": "command", **options})
+
+    def add_checkbutton(self, **options: object) -> None:
+        self.entries.append({"kind": "checkbutton", **options})
+
+    def add_separator(self) -> None:
+        self.entries.append({"kind": "separator"})
+
+    def tk_popup(self, x: int, y: int) -> None:
+        self.popup = x, y
+
+    def grab_release(self) -> None:
+        pass
+
+
+class FakeTk:
+    def __init__(self) -> None:
+        self.menus: list[FakeMenu] = []
+
+    def BooleanVar(self, master: object = None, value: bool = False) -> FakeVariable:
+        return FakeVariable(value)
+
+    def Menu(self, root: object, **options: object) -> FakeMenu:
+        menu = FakeMenu(root, **options)
+        self.menus.append(menu)
+        return menu
 
 
 def callbacks() -> CanvasCallbacks:
@@ -418,6 +478,68 @@ class WhaleAnimationTests(unittest.TestCase):
         view.close()
         view.close()
         self.assertEqual(root.after_callbacks, {})
+
+
+class CanvasInteractionTests(unittest.TestCase):
+    def make_view(self) -> tuple[CanvasMonitorView, FakeRoot, FakeTk, CallbackLog]:
+        root = FakeRoot()
+        tk = FakeTk()
+        log = CallbackLog()
+        view = CanvasMonitorView(
+            root,
+            config=AppConfig(auto_start=True),
+            callbacks=log.build(),
+            canvas=RecordingCanvas(),
+            tk_module=tk,
+        )
+        return view, root, tk, log
+
+    def test_top_right_collapse_and_exit_use_the_approved_callbacks(self) -> None:
+        view, _root, _tk, log = self.make_view()
+        view._normal_press(Event(221, 12))
+        view._normal_release(Event(221, 12))
+        self.assertEqual(log.collapsed, [True])
+
+        view.set_collapsed(False, animate=False)
+        view._normal_press(Event(242, 12))
+        view._normal_release(Event(242, 12))
+        self.assertEqual(log.exit_calls, 1)
+
+    def test_panel_and_bubble_context_menus_have_exact_commands(self) -> None:
+        view, _root, tk, _log = self.make_view()
+        view._show_context_menu(Event(1, 1, x_root=400, y_root=300))
+        panel_entries = tk.menus[-1].entries
+        self.assertEqual(
+            [entry.get("label") for entry in panel_entries if "label" in entry],
+            ["缩小为气泡", "立即刷新", "DeepSeek 控制台", "开机自启动", "退出"],
+        )
+
+        view.set_collapsed(True, animate=False)
+        view._show_context_menu(Event(1, 1, x_root=410, y_root=310))
+        bubble_entries = tk.menus[-1].entries
+        self.assertEqual(
+            [entry.get("label") for entry in bubble_entries if "label" in entry],
+            ["展开", "立即刷新", "开机自启动", "退出"],
+        )
+
+    def test_autostart_menu_is_disabled_while_change_is_pending(self) -> None:
+        view, _root, tk, log = self.make_view()
+        view.set_autostart_state(True, pending=True)
+        view._show_context_menu(Event(1, 1))
+        entry = next(
+            item for item in tk.menus[-1].entries if item.get("label") == "开机自启动"
+        )
+        self.assertEqual(entry["state"], "disabled")
+
+        view.set_autostart_state(False, pending=False)
+        view._show_context_menu(Event(1, 1))
+        entry = next(
+            item for item in tk.menus[-1].entries if item.get("label") == "开机自启动"
+        )
+        variable = entry["variable"]
+        variable.set(True)
+        entry["command"]()
+        self.assertEqual(log.autostart, [True])
 
 
 if __name__ == "__main__":

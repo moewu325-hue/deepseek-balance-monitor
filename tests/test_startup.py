@@ -40,6 +40,23 @@ class StartupManagerTests(unittest.TestCase):
                 content,
             )
 
+    def test_source_launcher_path_is_quoted_without_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            manager = StartupManager(
+                {"APPDATA": temporary},
+                Path(r"C:\Program Files\Python\python.exe"),
+                launcher=Path(r"D:\DeepSeek Monitor\deepseek_monitor.py"),
+                exists=lambda _path: True,
+            )
+            manager.set_enabled(True)
+            content = manager.entry_path.read_text(encoding="utf-16")
+            self.assertIn(
+                'shell.Run """C:\\Program Files\\Python\\pythonw.exe"" '
+                '""D:\\DeepSeek Monitor\\deepseek_monitor.py""", 0, False',
+                content,
+            )
+            self.assertNotIn("-m deepseek_balance_monitor", content)
+
     def test_disable_removes_only_the_dedicated_entry(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             manager = StartupManager({"APPDATA": temporary}, Path(r"C:\Python\python.exe"))

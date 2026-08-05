@@ -1,17 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 import os
 from pathlib import Path
 from queue import Empty, Full, Queue
+import sys
 import threading
 from typing import Any, Callable
+import webbrowser
 
 from .api import ApiClient
 from .controller import BalanceController, ControllerEventKind, ControllerUpdate
+from .canvas_ui import BG_DARK, CanvasCallbacks, CanvasMonitorView, PanelState
 from .credentials import (
     CredentialCandidate,
     CredentialResolver,
@@ -25,6 +28,8 @@ from .presentation import (
     build_balance_display,
     format_estimated_decrease,
 )
+from .settings import SettingsEvent, SettingsWorker
+from .startup import StartupManager
 from .storage import (
     AppConfig,
     AppPaths,
@@ -324,6 +329,24 @@ class UsageRecorder:
                 return
 
 
+class _NullSettings:
+    def __init__(self) -> None:
+        self.updates: Queue[SettingsEvent] = Queue()
+
+    def start(self) -> None:
+        pass
+
+    def request_save(self, config: AppConfig) -> None:
+        self.updates.put(SettingsEvent(config))
+
+    def request_autostart(self, enabled: bool, config: AppConfig) -> None:
+        updated = replace(config, auto_start=bool(enabled))
+        self.updates.put(SettingsEvent(updated, startup_changed=True))
+
+    def close(self, timeout: float | None = 2.0) -> None:
+        pass
+
+
 class BubbleApp:
     def __init__(
         self,
@@ -338,50 +361,127 @@ class BubbleApp:
         ]
         | None = None,
         tk_module: Any | None = None,
+        settings: Any | None = None,
+        startup: Any | None = None,
+        view: Any | None = None,
+        ask_yes_no: Callable[..., bool] | None = None,
+        show_error: Callable[..., None] | None = None,
     ) -> None:
         if tk_module is None:
             import tkinter as tk_module
 
         self._root = root
         self._controller = controller
-        self._config = config
         self._history = history
+        self._settings = settings if settings is not None else _NullSettings()
         self._controller_factory = controller_factory
         self._recovery_factory = recovery_factory
         self._recovery: Any | None = None
         self._retired_recoveries: list[Any] = []
         self._retired_controllers: list[BalanceController] = []
         self._recovery_active = False
-        self._tk = tk_module
         self._main_thread_id = threading.get_ident()
         self._closed = False
-        self._tracker = RapidClickTracker()
-        self._drag_origin: tuple[int, int, int, int] | None = None
-        self._dragged = False
-        self._balance_var = tk_module.StringVar(master=root, value="--")
-        self._status_var = tk_module.StringVar(master=root, value="正在读取余额…")
-        self._usage_var = tk_module.StringVar(
-            master=root,
-            value=f"{ESTIMATED_DECREASE_LABEL}：--",
+        self._started = False
+        self._confirming_exit = False
+        self._autostart_pending = False
+        self._pending_autostart_value: bool | None = None
+        self._poll_timer: Any | None = None
+        self._refresh_timer: Any | None = None
+        self._startup_sync_needed = False
+        self._ask_yes_no = ask_yes_no or _default_ask_yes_no
+        self._show_error = show_error or _default_show_error
+
+        if startup is not None:
+            try:
+                actual_startup = bool(startup.is_enabled())
+            except Exception:
+                actual_startup = config.auto_start
+            if actual_startup != config.auto_start:
+                config = replace(config, auto_start=actual_startup)
+                self._startup_sync_needed = True
+        self._config = config
+        self._view_state = PanelState(status_text="CONNECTING...")
+
+        root.overrideredirect(True)
+        root.attributes("-topmost", True)
+        root.attributes("-alpha", config.opacity)
+        root.configure(bg=BG_DARK)
+        x = 40 if config.window_x is None else config.window_x
+        y = 80 if config.window_y is None else config.window_y
+        root.geometry(f"255x215+{x}+{y}")
+
+        callbacks = CanvasCallbacks(
+            refresh=self._request_refresh,
+            open_console=self._open_console,
+            request_exit=self.request_exit,
+            set_collapsed=self._set_collapsed,
+            save_position=self._save_position,
+            set_autostart=self._set_autostart,
         )
-        self._build_widgets()
+        self._view = view or CanvasMonitorView(
+            root,
+            config=config,
+            callbacks=callbacks,
+            tk_module=tk_module,
+        )
+        self._view.set_autostart_state(config.auto_start, pending=False)
+        self._view.render(self._view_state)
 
     def start(self) -> None:
         self._assert_main_thread()
+        if self._closed or self._started:
+            return
+        self._started = True
+        self._settings.start()
+        if self._startup_sync_needed:
+            self._settings.request_save(self._config)
+            self._startup_sync_needed = False
         self._history.start()
         self._controller.start()
-        self._root.after(40, self._poll_updates)
-        self._root.after(max(self._config.refresh_interval, 1) * 1000, self._refresh)
+        self._poll_timer = self._root.after(40, self._poll_updates)
+        self._refresh_timer = self._root.after(
+            max(self._config.refresh_interval, 1) * 1000,
+            self._refresh,
+        )
+
+    def request_exit(self) -> None:
+        self._assert_main_thread()
+        if self._closed or self._confirming_exit:
+            return
+        self._confirming_exit = True
+        try:
+            try:
+                confirmed = bool(
+                    self._ask_yes_no(
+                        "退出确认",
+                        "确定要退出 DeepSeek 余额监控吗？",
+                        parent=self._root,
+                    )
+                )
+            except Exception:
+                confirmed = False
+        finally:
+            self._confirming_exit = False
+        if confirmed:
+            self.close()
 
     def close(self) -> None:
         self._assert_main_thread()
         if self._closed:
             return
         self._closed = True
+        self._cancel_root_timer("_poll_timer")
+        self._cancel_root_timer("_refresh_timer")
+        try:
+            self._view.close()
+        except Exception:
+            pass
         if self._recovery is not None:
             self._recovery.close(timeout=0.0)
         self._controller.close(timeout=0.2)
         self._history.close(timeout=0.2)
+        self._settings.close(timeout=0.2)
         try:
             self._root.destroy()
         except Exception:
@@ -397,6 +497,7 @@ class BubbleApp:
             controller.close(timeout=None)
         self._controller.close(timeout=None)
         self._history.close(timeout=None)
+        self._settings.close(timeout=None)
 
     def apply_controller_update(self, update: ControllerUpdate) -> None:
         self._assert_main_thread()
@@ -406,30 +507,41 @@ class BubbleApp:
             if not update.verified and update.probe_status is None:
                 self._begin_manual_recovery()
                 return
-            if update.verified:
-                self._status_var.set("凭据已验证，正在读取余额…")
-            else:
-                self._status_var.set("凭据暂未验证，正在尝试读取余额…")
+            status = (
+                "凭据已验证，正在读取余额…"
+                if update.verified
+                else "凭据暂未验证，正在尝试读取余额…"
+            )
+            self._render_status(status)
             return
         if update.kind is ControllerEventKind.ERROR:
-            self._status_var.set("运行任务失败，请稍后重试。")
+            self._render_status("运行任务失败，请稍后重试。", error="运行任务失败。")
             return
         if update.kind is not ControllerEventKind.FETCH or update.fetch is None:
             return
         fetched = update.fetch
         if fetched.snapshot is None:
-            if fetched.status_code == 402:
-                self._status_var.set("账户已认证，余额暂不可用。")
-            else:
-                self._status_var.set("余额读取失败，请稍后重试。")
+            message = (
+                "账户已认证，余额暂不可用。"
+                if fetched.status_code == 402
+                else "余额读取失败，请稍后重试。"
+            )
+            self._render_status(message, error=message)
             return
         try:
             display = build_balance_display(fetched.snapshot, self._config.currency)
         except ValueError:
-            self._status_var.set("首选币种不可用，无法确定显示金额。")
+            message = "首选币种不可用，无法确定显示金额。"
+            self._render_status(message, error=message)
             return
-        self._balance_var.set(display.balance_text)
-        self._status_var.set("余额已更新")
+        self._view_state = replace(
+            self._view_state,
+            display=display,
+            status_text="余额已更新",
+            error_text="",
+            refreshed_at=datetime.now().astimezone(),
+        )
+        self._view.render(self._view_state)
         self._history.record(display.currency, display.total_balance)
 
     def _begin_manual_recovery(self) -> None:
@@ -437,14 +549,14 @@ class BubbleApp:
         if self._closed or self._recovery_active:
             return
         if self._recovery_factory is None or self._controller_factory is None:
-            self._status_var.set("未找到可用凭据，请重新启动后设置。")
+            self._render_status(
+                "未找到可用凭据，请重新启动后设置。",
+                error="未找到可用凭据。",
+            )
             return
         self._recovery_active = True
-        self._status_var.set("凭据已失效，请重新输入。")
-        self._recovery = self._recovery_factory(
-            self._replace_controller,
-            self.close,
-        )
+        self._render_status("凭据已失效，请重新输入。", error="凭据需要更新。")
+        self._recovery = self._recovery_factory(self._replace_controller, self.close)
         self._recovery.start_manual()
 
     def _replace_controller(self, discovery: DiscoveryResult) -> None:
@@ -457,6 +569,8 @@ class BubbleApp:
             self._retired_recoveries.append(recovery)
         old_controller = self._controller
         try:
+            if self._controller_factory is None:
+                raise RuntimeError("Controller factory is unavailable")
             replacement = self._controller_factory(discovery)
             old_controller.close(timeout=0.2)
             self._retired_controllers.append(old_controller)
@@ -465,101 +579,18 @@ class BubbleApp:
         except Exception:
             self._recovery = None
             self._recovery_active = False
-            self._status_var.set("凭据恢复失败，请重新启动后重试。")
+            self._render_status(
+                "凭据恢复失败，请重新启动后重试。",
+                error="凭据恢复失败。",
+            )
             return
         self._recovery = None
         self._recovery_active = False
-        self._status_var.set("凭据已更新，正在读取余额…")
-
-    def _build_widgets(self) -> None:
-        tk = self._tk
-        root = self._root
-        root.overrideredirect(True)
-        root.attributes("-topmost", True)
-        root.attributes("-alpha", self._config.opacity)
-        root.configure(bg="#07131a")
-        x = 40 if self._config.window_x is None else self._config.window_x
-        y = 80 if self._config.window_y is None else self._config.window_y
-        root.geometry(f"+{x}+{y}")
-
-        self._shell = tk.Frame(
-            root,
-            bg="#07131a",
-            highlightbackground="#20d9ff",
-            highlightthickness=1,
-            padx=10,
-            pady=8,
-        )
-        self._shell.pack()
-        self._content = tk.Frame(self._shell, bg="#07131a")
-        self._content.pack()
-        self._title_label = tk.Label(
-            self._content,
-            text="DEEPSEEK // BALANCE",
-            fg="#20d9ff",
-            bg="#07131a",
-            font=("Segoe UI", 8, "bold"),
-        )
-        self._title_label.pack(anchor="w")
-        self._balance_label = tk.Label(
-            self._content,
-            textvariable=self._balance_var,
-            fg="#f25cff",
-            bg="#07131a",
-            font=("Segoe UI", 20, "bold"),
-        )
-        self._balance_label.pack(anchor="w")
-        self._usage_label = tk.Label(
-            self._content,
-            textvariable=self._usage_var,
-            fg="#b5cbd6",
-            bg="#07131a",
-            font=("Segoe UI", 8),
-        )
-        self._usage_label.pack(anchor="w")
-        self._status_label = tk.Label(
-            self._content,
-            textvariable=self._status_var,
-            fg="#6f8792",
-            bg="#07131a",
-            font=("Segoe UI", 7),
-        )
-        self._status_label.pack(anchor="w")
-        self._close_button = tk.Button(
-            self._content,
-            text="×",
-            command=self.close,
-            bd=0,
-            fg="#f25cff",
-            bg="#07131a",
-            activebackground="#112630",
-            activeforeground="#ffffff",
-        )
-        self._close_button.place(relx=1.0, x=0, y=0, anchor="ne")
-        self._compact = tk.Label(
-            self._shell,
-            text="DS",
-            fg="#20d9ff",
-            bg="#07131a",
-            font=("Segoe UI", 10, "bold"),
-        )
-        for widget in (
-            self._shell,
-            self._content,
-            self._title_label,
-            self._balance_label,
-            self._usage_label,
-            self._status_label,
-            self._compact,
-        ):
-            widget.bind("<ButtonPress-1>", self._drag_start)
-            widget.bind("<B1-Motion>", self._drag_move)
-            widget.bind("<ButtonRelease-1>", self._drag_end)
-        self._collapsed = not self._config.collapsed
-        self._set_collapsed(self._config.collapsed)
+        self._render_status("凭据已更新，正在读取余额…")
 
     def _poll_updates(self) -> None:
         self._assert_main_thread()
+        self._poll_timer = None
         if self._closed:
             return
         while True:
@@ -570,25 +601,72 @@ class BubbleApp:
             self.apply_controller_update(update)
             if self._closed:
                 return
-        if self._closed:
-            return
         while True:
             try:
                 event = self._history.updates.get_nowait()
             except Empty:
                 break
-            if event.currency is not None and event.estimated_decrease is not None:
-                self._usage_var.set(
-                    format_estimated_decrease(event.currency, event.estimated_decrease)
-                )
-            elif event.message:
-                self._status_var.set(event.message)
+            self._apply_history_event(event)
             if self._closed:
                 return
-        if not self._closed:
-            self._root.after(40, self._poll_updates)
+        while True:
+            try:
+                event = self._settings.updates.get_nowait()
+            except Empty:
+                break
+            self._apply_settings_event(event)
+            if self._closed:
+                return
+        self._poll_timer = self._root.after(40, self._poll_updates)
+
+    def _apply_history_event(self, event: UsageRecorderEvent) -> None:
+        self._assert_main_thread()
+        display = self._view_state.display
+        if (
+            event.currency is not None
+            and event.estimated_decrease is not None
+            and display is not None
+            and event.currency.upper() == display.currency
+        ):
+            self._view_state = replace(
+                self._view_state,
+                estimated_decrease=event.estimated_decrease,
+            )
+            self._view.render(self._view_state)
+        elif event.message:
+            self._show_generic_error(event.message)
+
+    def _apply_settings_event(self, event: SettingsEvent) -> None:
+        self._assert_main_thread()
+        self._config = event.config
+        if event.startup_changed:
+            self._autostart_pending = False
+            self._pending_autostart_value = None
+        shown_autostart = (
+            self._pending_autostart_value
+            if self._autostart_pending and self._pending_autostart_value is not None
+            else self._config.auto_start
+        )
+        self._view.set_autostart_state(
+            shown_autostart,
+            pending=self._autostart_pending,
+        )
+        if event.error:
+            self._show_generic_error(event.error)
 
     def _refresh(self) -> None:
+        self._assert_main_thread()
+        self._refresh_timer = None
+        if self._closed:
+            return
+        self._request_refresh()
+        if not self._closed:
+            self._refresh_timer = self._root.after(
+                max(self._config.refresh_interval, 1) * 1000,
+                self._refresh,
+            )
+
+    def _request_refresh(self) -> None:
         self._assert_main_thread()
         if self._closed:
             return
@@ -596,49 +674,91 @@ class BubbleApp:
             self._controller.request_refresh()
         except RuntimeError:
             return
-        self._root.after(max(self._config.refresh_interval, 1) * 1000, self._refresh)
 
-    def _drag_start(self, event: Any) -> None:
+    def _open_console(self) -> None:
         self._assert_main_thread()
-        self._drag_origin = (
-            event.x_root,
-            event.y_root,
-            self._root.winfo_x(),
-            self._root.winfo_y(),
-        )
-        self._dragged = False
-
-    def _drag_move(self, event: Any) -> None:
-        self._assert_main_thread()
-        if self._drag_origin is None:
-            return
-        start_x, start_y, window_x, window_y = self._drag_origin
-        dx = event.x_root - start_x
-        dy = event.y_root - start_y
-        self._dragged = self._dragged or abs(dx) > 2 or abs(dy) > 2
-        self._root.geometry(f"+{window_x + dx}+{window_y + dy}")
-
-    def _drag_end(self, event: Any) -> None:
-        self._assert_main_thread()
-        self._drag_origin = None
-        if not self._dragged and self._tracker.register(int(event.time)):
-            self._set_collapsed(not self._collapsed)
+        try:
+            webbrowser.open("https://platform.deepseek.com/usage")
+        except Exception:
+            self._show_generic_error("无法打开 DeepSeek 控制台。")
 
     def _set_collapsed(self, collapsed: bool) -> None:
         self._assert_main_thread()
-        if collapsed == self._collapsed:
+        self._save_position(
+            self._root.winfo_x(),
+            self._root.winfo_y(),
+            bool(collapsed),
+        )
+
+    def _save_position(self, x: int, y: int, collapsed: bool) -> None:
+        self._assert_main_thread()
+        if self._closed:
             return
-        self._collapsed = collapsed
-        if collapsed:
-            self._content.pack_forget()
-            self._compact.pack()
-        else:
-            self._compact.pack_forget()
-            self._content.pack()
+        self._config = replace(
+            self._config,
+            window_x=int(x),
+            window_y=int(y),
+            collapsed=bool(collapsed),
+        )
+        try:
+            self._settings.request_save(self._config)
+        except RuntimeError:
+            pass
+
+    def _set_autostart(self, enabled: bool) -> None:
+        self._assert_main_thread()
+        if self._closed or self._autostart_pending:
+            return
+        self._autostart_pending = True
+        self._pending_autostart_value = bool(enabled)
+        self._view.set_autostart_state(bool(enabled), pending=True)
+        try:
+            self._settings.request_autostart(bool(enabled), self._config)
+        except RuntimeError:
+            self._autostart_pending = False
+            self._pending_autostart_value = None
+            self._view.set_autostart_state(self._config.auto_start, pending=False)
+            self._show_generic_error("开机自启动设置失败。")
+
+    def _render_status(self, status: str, *, error: str = "") -> None:
+        self._view_state = replace(
+            self._view_state,
+            status_text=status,
+            error_text=error,
+        )
+        self._view.render(self._view_state)
+
+    def _show_generic_error(self, message: str) -> None:
+        try:
+            self._show_error("DeepSeek 余额监控", message, parent=self._root)
+        except Exception:
+            pass
+
+    def _cancel_root_timer(self, name: str) -> None:
+        timer = getattr(self, name, None)
+        if timer is None:
+            return
+        setattr(self, name, None)
+        try:
+            self._root.after_cancel(timer)
+        except Exception:
+            pass
 
     def _assert_main_thread(self) -> None:
         if threading.get_ident() != self._main_thread_id:
             raise RuntimeError("Tk 操作必须在主线程执行。")
+
+
+def _default_ask_yes_no(title: str, message: str, **options: Any) -> bool:
+    from tkinter import messagebox
+
+    return bool(messagebox.askyesno(title, message, **options))
+
+
+def _default_show_error(title: str, message: str, **options: Any) -> None:
+    from tkinter import messagebox
+
+    messagebox.showerror(title, message, **options)
 
 
 def update_usage(
@@ -860,6 +980,13 @@ def run_app() -> int:
     def ready(discovery: DiscoveryResult) -> None:
         controller = create_controller(discovery)
         history = UsageRecorder(paths.usage_log_path)
+        source_launcher = Path(__file__).resolve().parents[2] / "deepseek_monitor.py"
+        startup = StartupManager(
+            os.environ,
+            Path(sys.executable),
+            launcher=source_launcher if source_launcher.is_file() else None,
+        )
+        settings = SettingsWorker(paths.config_path, startup=startup)
         bubble = BubbleApp(
             root,
             controller=controller,
@@ -868,9 +995,13 @@ def run_app() -> int:
             controller_factory=create_recovery_controller,
             recovery_factory=create_recovery,
             tk_module=tk,
+            settings=settings,
+            startup=startup,
+            ask_yes_no=messagebox.askyesno,
+            show_error=messagebox.showerror,
         )
         active_app.append(bubble)
-        root.protocol("WM_DELETE_WINDOW", bubble.close)
+        root.protocol("WM_DELETE_WINDOW", bubble.request_exit)
         root.deiconify()
         bubble.start()
 

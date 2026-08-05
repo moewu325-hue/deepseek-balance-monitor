@@ -15,6 +15,7 @@ class StartupManager:
         env: Mapping[str, str],
         executable: Path,
         *,
+        launcher: Path | None = None,
         exists: Callable[[Path], bool] = Path.exists,
     ) -> None:
         appdata = env.get("APPDATA")
@@ -32,9 +33,13 @@ class StartupManager:
         executable = Path(executable)
         pythonw = executable.with_name("pythonw.exe")
         self._pythonw = pythonw if exists(pythonw) else executable
+        self._launcher = None if launcher is None else Path(launcher)
 
     def _content(self) -> str:
-        command = f'"{self._pythonw}" -m deepseek_balance_monitor'
+        if self._launcher is None:
+            command = f'"{self._pythonw}" -m deepseek_balance_monitor'
+        else:
+            command = f'"{self._pythonw}" "{self._launcher}"'
         escaped = command.replace('"', '""')
         return (
             'Set shell = CreateObject("WScript.Shell")\r\n'

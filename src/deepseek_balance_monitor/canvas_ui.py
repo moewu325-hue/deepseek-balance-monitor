@@ -58,6 +58,17 @@ class CanvasCallbacks:
     set_autostart: Callable[[bool], None]
 
 
+class _BooleanState:
+    def __init__(self, value: bool) -> None:
+        self._value = bool(value)
+
+    def get(self) -> bool:
+        return self._value
+
+    def set(self, value: bool) -> None:
+        self._value = bool(value)
+
+
 class CanvasMonitorView:
     normal_size = (FULL_WIDTH, FULL_HEIGHT)
 
@@ -77,6 +88,7 @@ class CanvasMonitorView:
         self._root = root
         self._config = config
         self._callbacks = callbacks
+        self._tk = tk_module
         self._now = now
         self._clock = clock
         self._state = PanelState()
@@ -101,6 +113,11 @@ class CanvasMonitorView:
         self._pressed = False
         self._drag_start: tuple[int, int] | None = None
         self._drag_origin: tuple[int, int] | None = None
+        self._normal_action: str | None = None
+        self._normal_drag_start: tuple[int, int] | None = None
+        self._normal_drag_origin: tuple[int, int] | None = None
+        self._normal_dragged = False
+        self._autostart_pending = False
         self._whale_frames = tuple(whale_frames[:18])
         source = random_source if random_source is not None else random.Random()
         self._particles = tuple(
@@ -126,6 +143,14 @@ class CanvasMonitorView:
             )
             canvas.pack()
         self._canvas = canvas
+        self._tk = tk_module
+        if tk_module is not None and hasattr(tk_module, "BooleanVar"):
+            self._autostart_var = tk_module.BooleanVar(master=root, value=config.auto_start)
+        else:
+            self._autostart_var = _BooleanState(config.auto_start)
+        self._bind_normal_events()
+        if config.collapsed:
+            self._enter_bubble(animate=False)
 
     @property
     def state(self) -> PanelState:
@@ -138,6 +163,10 @@ class CanvasMonitorView:
     @property
     def anchor(self) -> tuple[int, int]:
         return self._anchor_x, self._anchor_y
+
+    def set_autostart_state(self, enabled: bool, *, pending: bool = False) -> None:
+        self._autostart_var.set(bool(enabled))
+        self._autostart_pending = bool(pending)
 
     def render(self, state: PanelState, *, now: datetime | None = None) -> None:
         if not isinstance(state, PanelState):
@@ -213,6 +242,7 @@ class CanvasMonitorView:
         self._canvas.bind("<ButtonPress-1>", self._bubble_press)
         self._canvas.bind("<B1-Motion>", self._bubble_drag)
         self._canvas.bind("<ButtonRelease-1>", self._bubble_release)
+        self._canvas.bind("<Button-3>", self._show_context_menu)
         if animate:
             self._start_fade()
         self._start_swim()
@@ -237,6 +267,7 @@ class CanvasMonitorView:
         self._collapsed = False
         self._root.geometry(f"{FULL_WIDTH}x{FULL_HEIGHT}+{target_x}+{target_y}")
         self._canvas.config(width=FULL_WIDTH, height=FULL_HEIGHT, bg=BG_DARK)
+        self._bind_normal_events()
         try:
             self._root.configure(bg=BG_DARK)
         except Exception:
@@ -503,6 +534,95 @@ class CanvasMonitorView:
         if not display.available or display.total_balance <= self._low_balance_warning:
             return STAT_RED
         return STAT_GREEN
+
+    def _bind_normal_events(self) -> None:
+        self._canvas.bind("<ButtonPress-1>", self._normal_press)
+        self._canvas.bind("<B1-Motion>", self._normal_drag)
+        self._canvas.bind("<ButtonRelease-1>", self._normal_release)
+        self._canvas.bind("<Double-Button-1>", self._normal_double_click)
+        self._canvas.bind("<Button-3>", self._show_context_menu)
+
+    def _normal_press(self, event: Any) -> None:
+        if self._closed or self._collapsed:
+            return
+        self._normal_action = self.hit_test(int(event.x), int(event.y))
+        self._normal_dragged = False
+        if self._normal_action is not None:
+            self._normal_drag_start = None
+            self._normal_drag_origin = None
+            return
+        self._normal_drag_start = int(event.x_root), int(event.y_root)
+        self._normal_drag_origin = self._root.winfo_x(), self._root.winfo_y()
+
+    def _normal_drag(self, event: Any) -> None:
+        if self._normal_drag_start is None or self._normal_drag_origin is None:
+            return
+        dx = int(event.x_root) - self._normal_drag_start[0]
+        dy = int(event.y_root) - self._normal_drag_start[1]
+        self._normal_dragged = self._normal_dragged or abs(dx) > 2 or abs(dy) > 2
+        x, y = self._clamp_panel(
+            self._normal_drag_origin[0] + dx,
+            self._normal_drag_origin[1] + dy,
+        )
+        self._root.geometry(f"{FULL_WIDTH}x{FULL_HEIGHT}+{x}+{y}")
+
+    def _normal_release(self, event: Any) -> None:
+        if self._closed or self._collapsed:
+            return
+        action = self._normal_action
+        self._normal_action = None
+        self._normal_drag_start = None
+        self._normal_drag_origin = None
+        if action is not None:
+            if self.hit_test(int(event.x), int(event.y)) != action:
+                return
+            if action == "collapse":
+                self.set_collapsed(True, animate=True)
+            elif action == "exit":
+                self._callbacks.request_exit()
+            return
+        if self._normal_dragged:
+            self._callbacks.save_position(
+                self._root.winfo_x(),
+                self._root.winfo_y(),
+                False,
+            )
+
+    def _normal_double_click(self, event: Any) -> None:
+        if not self._collapsed and self.hit_test(int(event.x), int(event.y)) is None:
+            self._callbacks.open_console()
+
+    def _show_context_menu(self, event: Any) -> None:
+        if self._closed or self._tk is None or not hasattr(self._tk, "Menu"):
+            return
+        menu = self._tk.Menu(self._root, tearoff=0)
+        if self._collapsed:
+            menu.add_command(label="展开", command=lambda: self.set_collapsed(False))
+        else:
+            menu.add_command(label="缩小为气泡", command=lambda: self.set_collapsed(True))
+        menu.add_separator()
+        menu.add_command(label="立即刷新", command=self._callbacks.refresh)
+        if not self._collapsed:
+            menu.add_command(label="DeepSeek 控制台", command=self._callbacks.open_console)
+        menu.add_checkbutton(
+            label="开机自启动",
+            variable=self._autostart_var,
+            command=self._request_autostart_from_menu,
+            state="disabled" if self._autostart_pending else "normal",
+        )
+        menu.add_separator()
+        menu.add_command(label="退出", command=self._callbacks.request_exit)
+        try:
+            menu.tk_popup(int(event.x_root), int(event.y_root))
+        finally:
+            try:
+                menu.grab_release()
+            except Exception:
+                pass
+
+    def _request_autostart_from_menu(self) -> None:
+        if not self._autostart_pending:
+            self._callbacks.set_autostart(bool(self._autostart_var.get()))
 
     @staticmethod
     def hit_test(x: int, y: int) -> str | None:

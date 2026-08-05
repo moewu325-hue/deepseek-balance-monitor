@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -9,7 +10,7 @@ import threading
 import time
 from types import ModuleType, SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 import deepseek_balance_monitor.app as app_module
 from deepseek_balance_monitor.app import (
@@ -33,6 +34,7 @@ from deepseek_balance_monitor.controller import (
     ControllerEventKind,
     ControllerUpdate,
 )
+from deepseek_balance_monitor.canvas_ui import PanelState
 from deepseek_balance_monitor.credentials import CredentialCandidate, DiscoveryResult
 from deepseek_balance_monitor.models import (
     BalanceInfo,
@@ -47,6 +49,7 @@ from deepseek_balance_monitor.storage import (
     UsageLog,
     UsageRecord,
 )
+from deepseek_balance_monitor.settings import SettingsEvent
 
 
 SECRET = "sk-ui-synthetic-secret"
@@ -729,46 +732,6 @@ class ManualDialogTests(unittest.TestCase):
         self.assertNotIn("transient_owners", window.options)
 
 
-class _WidgetRoot:
-    def overrideredirect(self, enabled: bool) -> None:
-        pass
-
-    def attributes(self, name: str, value: object) -> None:
-        pass
-
-    def configure(self, **options: object) -> None:
-        pass
-
-    def geometry(self, value: str) -> None:
-        pass
-
-
-class BubbleWidgetBindingTests(unittest.TestCase):
-    def test_balance_usage_and_status_labels_each_bind_drag_events_but_button_does_not(self) -> None:
-        module = FakeTkModule()
-        bubble = BubbleApp(
-            _WidgetRoot(),
-            controller=_OldController(),
-            config=AppConfig(),
-            history=_ClosableHistorySink(),
-            tk_module=module,
-        )
-        expected = {
-            "<ButtonPress-1>",
-            "<B1-Motion>",
-            "<ButtonRelease-1>",
-        }
-
-        for label in (
-            bubble._balance_label,
-            bubble._usage_label,
-            bubble._status_label,
-        ):
-            self.assertEqual(set(label.bindings), expected)
-        close_button = next(widget for widget in module.widgets if widget.kind == "Button")
-        self.assertEqual(close_button.bindings, {})
-
-
 class UsageRecorderTests(unittest.TestCase):
     def test_load_and_atomic_save_are_worker_only_and_publish_currency_scoped_result(self) -> None:
         when = datetime(2026, 8, 3, 9, 30, tzinfo=timezone.utc)
@@ -956,7 +919,9 @@ class RuntimeShutdownTests(unittest.TestCase):
         bubble._controller_factory = lambda discovery: Closable("new_controller")
         bubble._retired_recoveries = []
         bubble._retired_controllers = []
-        bubble._status_var = SimpleNamespace(set=lambda value: None)
+        bubble._view_state = PanelState()
+        bubble._view = _RecordingView()
+        bubble._settings = Closable("settings")
 
         bubble._replace_controller(DiscoveryResult())
         bubble.wait_for_shutdown()
@@ -971,6 +936,7 @@ class RuntimeShutdownTests(unittest.TestCase):
                 ("old_controller.close", None),
                 ("new_controller.close", None),
                 ("history.close", None),
+                ("settings.close", None),
             ],
         )
 
@@ -989,6 +955,7 @@ class RuntimeShutdownTests(unittest.TestCase):
         bubble._recovery = Closable("recovery")
         bubble._controller = Closable("controller")
         bubble._history = Closable("history")
+        bubble._settings = Closable("settings")
         bubble._retired_recoveries = []
         bubble._retired_controllers = []
 
@@ -996,7 +963,12 @@ class RuntimeShutdownTests(unittest.TestCase):
 
         self.assertEqual(
             calls,
-            [("recovery", None), ("controller", None), ("history", None)],
+            [
+                ("recovery", None),
+                ("controller", None),
+                ("history", None),
+                ("settings", None),
+            ],
         )
 
     def test_run_app_waits_for_full_quiescence_after_window_close(self) -> None:
@@ -1035,6 +1007,9 @@ class RuntimeShutdownTests(unittest.TestCase):
             def start(self) -> None:
                 pass
 
+            def request_exit(self) -> None:
+                pass
+
             def close(self) -> None:
                 calls.append(("bubble.close", None))
 
@@ -1043,7 +1018,11 @@ class RuntimeShutdownTests(unittest.TestCase):
 
         fake_tk = ModuleType("tkinter")
         fake_tk.Tk = FakeRoot
-        fake_tk.messagebox = SimpleNamespace(showerror=lambda *a, **k: None, showinfo=lambda *a, **k: None)
+        fake_tk.messagebox = SimpleNamespace(
+            showerror=lambda *a, **k: None,
+            showinfo=lambda *a, **k: None,
+            askyesno=lambda *a, **k: False,
+        )
         fake_paths = SimpleNamespace(
             config_path=Path("synthetic-config.json"),
             usage_log_path=Path("synthetic-usage.json"),
@@ -1089,6 +1068,154 @@ class _HistorySink:
 
     def record(self, currency: str, total: Decimal) -> None:
         self.records.append((currency, total))
+
+
+class _RecordingView:
+    def __init__(self) -> None:
+        self.renders: list[PanelState] = []
+        self.close_calls = 0
+        self.autostart_states: list[tuple[bool, bool]] = []
+
+    def render(self, state: PanelState) -> None:
+        self.renders.append(state)
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+    def set_autostart_state(self, enabled: bool, *, pending: bool = False) -> None:
+        self.autostart_states.append((enabled, pending))
+
+
+class _QueueSettings:
+    def __init__(self) -> None:
+        self.updates: Queue[SettingsEvent] = Queue()
+        self.close_timeouts: list[float | None] = []
+        self.saves: list[AppConfig] = []
+        self.autostart_requests: list[tuple[bool, AppConfig]] = []
+
+    def request_save(self, config: AppConfig) -> None:
+        self.saves.append(config)
+
+    def request_autostart(self, enabled: bool, config: AppConfig) -> None:
+        self.autostart_requests.append((enabled, config))
+
+    def close(self, timeout: float | None = 2.0) -> None:
+        self.close_timeouts.append(timeout)
+
+
+class BubbleIntegrationTests(unittest.TestCase):
+    def make_bubble(self) -> BubbleApp:
+        bubble = object.__new__(BubbleApp)
+        bubble._main_thread_id = threading.get_ident()
+        bubble._closed = False
+        bubble._confirming_exit = False
+        bubble._pending_autostart_value = None
+        bubble._config = AppConfig(currency="CNY")
+        bubble._view_state = PanelState()
+        bubble._view = _RecordingView()
+        bubble._history = _ClosableHistorySink()
+        bubble._controller = _OldController()
+        bubble._settings = _QueueSettings()
+        bubble._controller_factory = None
+        bubble._recovery_factory = None
+        bubble._recovery = None
+        bubble._retired_recoveries = []
+        bubble._retired_controllers = []
+        bubble._recovery_active = False
+        bubble._poll_timer = None
+        bubble._refresh_timer = None
+        bubble._root = _DestroyRoot()
+        bubble._show_error = lambda _title, _message, **_options: None
+        return bubble
+
+    def test_exit_requires_confirmation_once_and_confirmed_close_is_idempotent(self) -> None:
+        bubble = self.make_bubble()
+        confirm = Mock(side_effect=[False, True])
+        bubble._ask_yes_no = confirm
+
+        bubble.request_exit()
+        self.assertFalse(bubble._closed)
+        bubble.request_exit()
+        self.assertTrue(bubble._closed)
+        bubble.request_exit()
+
+        self.assertEqual(
+            confirm.call_args_list,
+            [
+                call(
+                    "退出确认",
+                    "确定要退出 DeepSeek 余额监控吗？",
+                    parent=bubble._root,
+                ),
+                call(
+                    "退出确认",
+                    "确定要退出 DeepSeek 余额监控吗？",
+                    parent=bubble._root,
+                ),
+            ],
+        )
+        self.assertEqual(bubble._controller.close_calls, 1)
+        self.assertEqual(bubble._view.close_calls, 1)
+
+    def test_constructor_composes_initial_canvas_state_without_widget_variables(self) -> None:
+        root = Mock()
+        view = _RecordingView()
+        bubble = BubbleApp(
+            root,
+            controller=_OldController(),
+            config=AppConfig(window_x=12, window_y=34, auto_start=True),
+            history=_ClosableHistorySink(),
+            tk_module=SimpleNamespace(),
+            view=view,
+            ask_yes_no=lambda *_args, **_options: False,
+            show_error=lambda *_args, **_options: None,
+        )
+        self.assertEqual(view.autostart_states, [(True, False)])
+        self.assertEqual(view.renders[-1].status_text, "CONNECTING...")
+        root.geometry.assert_called_once_with("255x215+12+34")
+        self.assertFalse(hasattr(bubble, "_balance_var"))
+
+    def test_multi_currency_fetch_sends_only_preferred_currency_to_view(self) -> None:
+        bubble = self.make_bubble()
+        snapshot = BalanceSnapshot(
+            True,
+            (info("USD", "3.25"), info("CNY", "8.50", topped="4.25")),
+        )
+        bubble.apply_controller_update(
+            ControllerUpdate(
+                ControllerEventKind.FETCH,
+                fetch=FetchResult(snapshot, status_code=200),
+            )
+        )
+        state = bubble._view.renders[-1]
+        self.assertEqual(state.display.currency, "CNY")
+        self.assertEqual(state.display.total_balance, Decimal("8.50"))
+        self.assertEqual(state.display.topped_up_balance, Decimal("4.25"))
+        self.assertNotIn("11.75", repr(state))
+
+    def test_history_decrease_is_not_multiplied_during_peak_time(self) -> None:
+        bubble = self.make_bubble()
+        bubble._view_state = PanelState(display=build_balance_display(
+            BalanceSnapshot(True, (info("CNY", "8.50"),)),
+            "CNY",
+        ))
+        bubble._apply_history_event(UsageRecorderEvent("CNY", Decimal("2.50")))
+        self.assertEqual(bubble._view.renders[-1].estimated_decrease, Decimal("2.50"))
+
+    def test_autostart_menu_stays_pending_until_worker_event(self) -> None:
+        bubble = self.make_bubble()
+        bubble._autostart_pending = False
+        bubble._set_autostart(True)
+        self.assertEqual(
+            bubble._settings.autostart_requests,
+            [(True, bubble._config)],
+        )
+        self.assertEqual(bubble._view.autostart_states[-1], (True, True))
+
+        updated = replace(bubble._config, auto_start=True)
+        bubble._apply_settings_event(SettingsEvent(updated, startup_changed=True))
+        self.assertFalse(bubble._autostart_pending)
+        self.assertEqual(bubble._view.autostart_states[-1], (True, False))
 
 
 class _ClosableHistorySink(_HistorySink):
@@ -1165,9 +1292,10 @@ class BubbleThreadBoundaryTests(unittest.TestCase):
         bubble._main_thread_id = threading.get_ident()
         bubble._closed = False
         bubble._config = AppConfig(currency="CNY")
-        bubble._balance_var = _ThreadBoundVariable()
-        bubble._status_var = _ThreadBoundVariable()
+        bubble._view_state = PanelState()
+        bubble._view = _RecordingView()
         bubble._history = _HistorySink()
+        bubble._settings = _QueueSettings()
         bubble._controller = _OldController()
         bubble._controller_factory = None
         bubble._recovery_factory = None
@@ -1175,6 +1303,9 @@ class BubbleThreadBoundaryTests(unittest.TestCase):
         bubble._retired_recoveries = []
         bubble._retired_controllers = []
         bubble._recovery_active = False
+        bubble._poll_timer = None
+        bubble._refresh_timer = None
+        bubble._show_error = lambda *_args, **_kwargs: None
         return bubble
 
     def test_controller_result_is_applied_and_history_enqueued_on_main_thread(self) -> None:
@@ -1187,9 +1318,8 @@ class BubbleThreadBoundaryTests(unittest.TestCase):
 
         bubble.apply_controller_update(update)
 
-        self.assertEqual(bubble._balance_var.values, ["¥8.50"])
+        self.assertEqual(bubble._view.renders[-1].display.balance_text, "¥8.50")
         self.assertEqual(bubble._history.records, [("CNY", Decimal("8.50"))])
-        self.assertEqual(bubble._balance_var.thread_ids, [threading.get_ident()])
 
     def test_worker_thread_cannot_mutate_tk_variables(self) -> None:
         bubble = self._bubble()
@@ -1208,7 +1338,7 @@ class BubbleThreadBoundaryTests(unittest.TestCase):
 
         self.assertEqual(len(errors), 1)
         self.assertIsInstance(errors[0], RuntimeError)
-        self.assertEqual(bubble._status_var.values, [])
+        self.assertEqual(bubble._view.renders, [])
         self.assertNotIn(SECRET, repr(errors))
 
     def test_empty_runtime_discovery_starts_one_manual_recovery_and_seeds_replacement(self) -> None:
@@ -1273,7 +1403,7 @@ class BubbleThreadBoundaryTests(unittest.TestCase):
         self.assertEqual(seeded, [discovery])
         self.assertEqual(resolver.calls, 0)
         self.assertEqual(replacement.updates.qsize(), 2)
-        self.assertNotIn(SECRET, repr(bubble._status_var.values))
+        self.assertNotIn(SECRET, repr(bubble._view.renders))
 
     def test_indeterminate_runtime_discovery_does_not_start_manual_recovery(self) -> None:
         bubble = self._bubble()
@@ -1318,13 +1448,11 @@ class BubbleThreadBoundaryTests(unittest.TestCase):
         root = _DestroyedAfterRoot()
         controller = _QueueController()
         history = _QueueHistory()
-        usage_variable = _ThreadBoundVariable()
         controller.updates.put(ControllerUpdate(ControllerEventKind.DISCOVERY))
         history.updates.put(UsageRecorderEvent("CNY", Decimal("1")))
         bubble._root = root
         bubble._controller = controller
         bubble._history = history
-        bubble._usage_var = usage_variable
         bubble._controller_factory = lambda discovery: _OldController()
         bubble._recovery_factory = (
             lambda ready, cancel: _SynchronousCancelRecovery(ready, cancel)
@@ -1335,7 +1463,6 @@ class BubbleThreadBoundaryTests(unittest.TestCase):
         self.assertTrue(bubble._closed)
         self.assertEqual(root.destroy_calls, 1)
         self.assertEqual(root.after_calls, 0)
-        self.assertEqual(usage_variable.values, [])
         self.assertEqual(history.updates.qsize(), 1)
 
 
