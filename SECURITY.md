@@ -17,6 +17,7 @@ DeepSeek Balance Monitor is a local Windows desktop client. Its security goal is
 - `DEEPSEEK_API_KEY` and Windows Credential Manager are external credential stores.
 - Claude settings, the known Claude credential target, and legacy JSON are untrusted migration inputs.
 - DeepSeek's HTTPS response is external data and is schema-validated before use.
+- User-approved startup persistence crosses into `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\DeepSeekBalanceMonitor.vbs`.
 - The repository, dependency artifacts, GitHub Actions, and local Git history form the software supply-chain boundary.
 
 ## Abuse Cases
@@ -25,6 +26,7 @@ DeepSeek Balance Monitor is a local Windows desktop client. Its security goal is
 - A malicious Claude base URL attempts to redirect a compatible token to another host.
 - A proxy or endpoint redirects the balance request to an attacker-controlled destination.
 - A transient server failure is mistaken for an invalid key and causes unsafe fallback or persistence.
+- A modified startup entry exposes a credential or launches an unexpected target.
 - Console output, exceptions, test fixtures, or Git history accidentally disclose a credential.
 - Modified dependency artifacts execute instead of the reviewed packages.
 
@@ -35,6 +37,7 @@ DeepSeek Balance Monitor is a local Windows desktop client. Its security goal is
 - Manual fields are masked. Persistence is opt-in and happens only after authentication is confirmed; indeterminate credentials remain memory-only.
 - Requests use a fixed HTTPS balance URL, TLS verification, no redirects, and bounded timeouts. Responses require the expected schema and finite decimal values.
 - Configuration and usage history use strict allowlists, atomic replacement, and read-back checks. Legacy migration drops secret and unknown fields and forces `auto_start=false`.
+- Autostart is disabled by default and changed only after explicit user action. The app atomically manages its dedicated VBS file, verifies exact contents, and that file must never contain an API key.
 - Runtime files stay below `%LOCALAPPDATA%\DeepSeekBalanceMonitor`; repository hygiene tests reject common private/runtime artifacts, private paths, unsafe emails, and realistic token literals.
 - Runtime dependencies are exactly pinned and installed from a hash-checked lock file in CI.
 
@@ -43,6 +46,7 @@ DeepSeek Balance Monitor is a local Windows desktop client. Its security goal is
 - Environment variables and Windows Credential Manager are controlled by Windows and the user; their visibility and persistence are outside this application's guarantees.
 - A compromised operating system, Python runtime, TLS trust store, dependency, DeepSeek account, or DeepSeek service can defeat application-level controls.
 - Balance history is ordinary local JSON, not encrypted, and may disclose usage patterns to processes with access to the user's profile.
+- The startup entry contains the local project or installed launcher path, which can reveal workstation details and will stop working if that target moves.
 - The local “today's balance decrease” value is an estimate based on observed balances, not billing-grade accounting.
 - A user can still publish private files by bypassing the documented tests or rewriting the repository after verification.
 

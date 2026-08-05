@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 import math
+from pathlib import Path
 import random
 import time
 from typing import Any, Callable
@@ -67,6 +68,32 @@ class _BooleanState:
 
     def set(self, value: bool) -> None:
         self._value = bool(value)
+
+
+def load_whale_frames(
+    icon_path: Path,
+    *,
+    photo_factory: Callable[[Any], Any],
+) -> tuple[Any, ...]:
+    try:
+        from PIL import Image
+
+        with Image.open(icon_path) as source:
+            whale = source.convert("RGBA")
+        resampling = Image.Resampling
+        angles = (-8, -6, -4, -2, 0, 2, 4, 6, 8)
+        frames: list[Any] = []
+        for size in (44, 40):
+            base = whale.resize((size, size), resampling.LANCZOS)
+            frames.extend(
+                photo_factory(
+                    base.rotate(angle, resample=resampling.BICUBIC, expand=False)
+                )
+                for angle in angles
+            )
+        return tuple(frames)
+    except Exception:
+        return ()
 
 
 class CanvasMonitorView:

@@ -14,7 +14,13 @@ import webbrowser
 
 from .api import ApiClient
 from .controller import BalanceController, ControllerEventKind, ControllerUpdate
-from .canvas_ui import BG_DARK, CanvasCallbacks, CanvasMonitorView, PanelState
+from .canvas_ui import (
+    BG_DARK,
+    CanvasCallbacks,
+    CanvasMonitorView,
+    PanelState,
+    load_whale_frames,
+)
 from .credentials import (
     CredentialCandidate,
     CredentialResolver,
@@ -43,6 +49,28 @@ from .storage import (
 
 
 HISTORY_RETENTION_LIMIT = 10_000
+
+
+def _load_whale_ui_frames(root: Any) -> tuple[Any, ...]:
+    try:
+        from PIL import ImageTk
+    except Exception:
+        return ()
+
+    candidates = (
+        Path(__file__).resolve().parents[2] / "assets" / "deepseek_icon.ico",
+        Path(sys.prefix) / "share" / "deepseek-balance-monitor" / "deepseek_icon.ico",
+    )
+    for icon_path in candidates:
+        if not icon_path.is_file():
+            continue
+        frames = load_whale_frames(
+            icon_path,
+            photo_factory=lambda image: ImageTk.PhotoImage(image, master=root),
+        )
+        if frames:
+            return frames
+    return ()
 _CLICK_INTERVAL_MS = 400
 
 
@@ -419,12 +447,15 @@ class BubbleApp:
             save_position=self._save_position,
             set_autostart=self._set_autostart,
         )
-        self._view = view or CanvasMonitorView(
-            root,
-            config=config,
-            callbacks=callbacks,
-            tk_module=tk_module,
-        )
+        if view is None:
+            view = CanvasMonitorView(
+                root,
+                config=config,
+                callbacks=callbacks,
+                tk_module=tk_module,
+                whale_frames=_load_whale_ui_frames(root),
+            )
+        self._view = view
         self._view.set_autostart_state(config.auto_start, pending=False)
         self._view.render(self._view_state)
 

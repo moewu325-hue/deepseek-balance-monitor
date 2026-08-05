@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from decimal import Decimal
 import math
+from pathlib import Path
 import random
 import re
 import unittest
@@ -10,9 +11,20 @@ from deepseek_balance_monitor.canvas_ui import (
     CanvasCallbacks,
     CanvasMonitorView,
     PanelState,
+    load_whale_frames,
 )
 from deepseek_balance_monitor.presentation import BalanceDisplay
 from deepseek_balance_monitor.storage import AppConfig
+
+
+class WhaleFrameTests(unittest.TestCase):
+    def test_loads_cached_normal_and_pressed_frames_from_legacy_icon(self) -> None:
+        icon_path = Path(__file__).resolve().parents[1] / "assets" / "deepseek_icon.ico"
+
+        frames = load_whale_frames(icon_path, photo_factory=lambda image: image.copy())
+
+        self.assertEqual(len(frames), 18)
+        self.assertEqual({frame.size for frame in frames}, {(44, 44), (40, 40)})
 
 
 class RecordingCanvas:

@@ -1471,18 +1471,6 @@ class SourceSafetyTests(unittest.TestCase):
         self.assertTrue(callable(run_app))
         self.assertEqual(run_app.__name__, "run_app")
 
-    def test_production_ui_has_no_removed_pricing_terms(self) -> None:
-        source = (
-            Path(__file__).parents[1]
-            / "src"
-            / "deepseek_balance_monitor"
-            / "app.py"
-        ).read_text(encoding="utf-8").lower()
-
-        for forbidden in ("peak", "double", "高峰", "双倍"):
-            with self.subTest(forbidden=forbidden):
-                self.assertNotIn(forbidden, source)
-
 
 if __name__ == "__main__":
     unittest.main()

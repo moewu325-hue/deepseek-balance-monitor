@@ -342,28 +342,61 @@ class RepositoryHygieneTests(unittest.TestCase):
             "Download or check out the source, then open a terminal in the project directory",
             _read_index_text("README_en.md"),
         )
+        chinese = _read_index_text("README.md")
+        english = _read_index_text("README_en.md")
+        for expected in ("北京时间每日 9:00～12:00 和 14:00～18:00", "开机自启动", "二次确认"):
+            self.assertIn(expected, chinese)
+        for expected in ("Beijing time", "autostart", "confirmation"):
+            self.assertIn(expected, english)
 
-    def test_icon_has_transparency_and_required_sizes(self) -> None:
-        required = {(size, size) for size in (16, 24, 32, 48, 64, 128, 256)}
+    def test_icon_is_the_approved_transparent_legacy_size(self) -> None:
         with Image.open(io.BytesIO(_read_index_bytes("assets/deepseek_icon.ico"))) as image:
             self.assertEqual("ICO", image.format)
             sizes = set(image.ico.sizes())
-            self.assertTrue(required.issubset(sizes))
-            for size in required:
-                frame = image.ico.getimage(size).convert("RGBA")
-                self.assertLess(frame.getchannel("A").getextrema()[0], 255)
+            self.assertEqual({(225, 225)}, sizes)
+            frame = image.ico.getimage((225, 225)).convert("RGBA")
+            self.assertEqual((0, 255), frame.getchannel("A").getextrema())
 
-    def test_icon_notice_matches_generation_record(self) -> None:
+    def test_icon_notice_records_unverified_user_approved_provenance(self) -> None:
         text = _read_index_text("NOTICE")
-        for expected in (
-            "OpenAI's built-in image generation",
-            "data pulse",
-            "chroma",
-            "Pillow",
-            "no text, brand mark, or DeepSeek logo",
-            "16, 24, 32, 48, 64, 128, and 256",
-        ):
-            self.assertIn(expected, text)
+        self.assertIn("user-provided legacy whale asset", text)
+        self.assertIn(
+            "redistribution authorization has not been independently verified",
+            text,
+        )
+        self.assertNotIn("OpenAI's built-in image generation", text)
+
+    def test_peak_release_contract_is_informational_and_uses_beijing_time(self) -> None:
+        peak_source = _read_index_text("src/deepseek_balance_monitor/peak.py")
+        canvas_source = _read_index_text("src/deepseek_balance_monitor/canvas_ui.py")
+        self.assertIn("9 * 60 <= minutes < 12 * 60", peak_source)
+        self.assertIn("14 * 60 <= minutes < 18 * 60", peak_source)
+        copy_source = peak_source + canvas_source
+        self.assertIn("▲ 高峰期 · 双倍消耗", copy_source)
+        self.assertIn("● 非高峰 · 正常计费", copy_source)
+
+        monetary_sources = {
+            "presentation.py": _read_index_text("src/deepseek_balance_monitor/presentation.py"),
+            "app.py": _read_index_text("src/deepseek_balance_monitor/app.py"),
+        }
+        violations: list[str] = []
+        for name, source in monetary_sources.items():
+            tree = ast.parse(source)
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.BinOp) or not isinstance(node.op, ast.Mult):
+                    continue
+                constants = (node.left, node.right)
+                if any(isinstance(value, ast.Constant) and value.value == 2 for value in constants):
+                    violations.append(f"{name}:{node.lineno}")
+        self.assertEqual([], violations)
+
+    def test_security_documents_exact_secret_free_startup_surface(self) -> None:
+        text = _read_index_text("SECURITY.md")
+        self.assertIn(
+            r"%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\DeepSeekBalanceMonitor.vbs",
+            text,
+        )
+        self.assertIn("must never contain an API key", text)
 
     def test_batch_launcher_detaches_windowed_python_safely(self) -> None:
         text = _read_index_text("run_monitor.bat")

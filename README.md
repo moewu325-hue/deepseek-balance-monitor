@@ -39,13 +39,16 @@ deepseek-balance-monitor/
 - 在后台线程发现并验证凭据、请求余额，Tk 更新仅在主线程执行。
 - 只请求固定端点 `https://api.deepseek.com/user/balance`，启用 TLS 校验、禁止重定向并设置连接/读取超时。
 - 401 时排除失效候选并尝试下一个来源；临时网络或服务异常不会永久拒绝凭据。
-- 显示总余额与“今日余额减少（估算）”；不实现时段加价或倍率计费推算。
+- 复刻本地版 255×215 余额面板与 100×100 鲸鱼气泡；支持点击展开、拖动定位和左右游动动画。
+- 高峰标签固定按北京时间每日 9:00～12:00 和 14:00～18:00 显示，适用于中国及其他地区的用户；它只提示官网计费时段，不重算余额，也不把估算消耗乘以 2。
+- 右键菜单可由用户显式开启或关闭开机自启动；默认关闭，变更期间菜单会暂时禁用。
+- 缩小按钮和 `✕` 均位于右上角；标题栏关闭、菜单退出和 `✕` 都使用同一二次确认。
 - 记录按币种隔离的每日基线和历史，不把不同币种相加。
 - 使用 Windows 命名互斥量防止新版程序重复启动。
 
 ## 配置说明
 
-运行数据写入 `%LOCALAPPDATA%\DeepSeekBalanceMonitor`，包括不含凭据的 `config.json` 和按币种记录的 `usage_log.json`。历史最多保留最近 10,000 条，相邻且币种与余额都相同的采样不会重复写入。`config.example.json` 展示全部 9 个允许字段；`auto_start` 默认为 `false`，当前版本不会创建或修改 Windows 启动项。
+运行数据写入 `%LOCALAPPDATA%\DeepSeekBalanceMonitor`，包括不含凭据的 `config.json` 和按币种记录的 `usage_log.json`。历史最多保留最近 10,000 条，相邻且币种与余额都相同的采样不会重复写入。`config.example.json` 展示全部 9 个允许字段；`auto_start` 默认为 `false`。用户开启后，程序只管理 `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\DeepSeekBalanceMonitor.vbs` 这一专用启动项，关闭后只删除该文件。
 
 币种选择规则：优先使用 `currency` 指定的币种；响应只有一种币种时可回退；响应含多种币种且缺少首选币种时明确报错，绝不相加。CNY 显示为 `¥`、USD 显示为 `$`，其他代码显示为 `CODE 12.34`。
 
@@ -77,4 +80,4 @@ deepseek-balance-monitor --migrate-claude-compat
 
 ## License
 
-MIT，详见 [LICENSE](LICENSE)。DeepSeek 是其权利人的商标；本项目与 DeepSeek 无隶属、赞助或背书关系。
+MIT，详见 [LICENSE](LICENSE)。鲸鱼图标是按用户明确选择随项目提供的旧版资源，其原作者、许可与再分发授权未经独立验证；详见 [NOTICE](NOTICE)。DeepSeek 是其权利人的商标；本项目与 DeepSeek 无隶属、赞助或背书关系。

@@ -39,13 +39,16 @@ deepseek-balance-monitor/
 - Discovers credentials and fetches balances on worker threads; Tk updates stay on the main thread.
 - Calls only `https://api.deepseek.com/user/balance`, with TLS verification, redirects disabled, and bounded connect/read timeouts.
 - Excludes a rejected candidate after HTTP 401 and tries the next source; temporary network or service failures do not permanently reject it.
-- Displays total balance and “today's balance decrease (estimated)” without time-based surcharges or multiplier pricing estimates.
+- Reproduces the legacy 255×215 balance panel and 100×100 whale bubble, including click-to-expand, drag positioning, and side-to-side swimming.
+- Shows peak labels at 09:00–12:00 and 14:00–18:00 Beijing time for users in every region. The label is informational: it neither recalculates the returned balance nor doubles the usage estimate.
+- Lets the user explicitly enable or disable autostart from the context menu; it is off by default and the control is disabled while a change is pending.
+- Places collapse and `✕` in the top-right corner. Window close, menu exit, and `✕` share the same confirmation dialog.
 - Keeps daily baselines and history isolated by currency; amounts in different currencies are never added.
 - Uses a Windows named mutex to prevent duplicate instances of this version.
 
 ## Configuration
 
-Runtime data lives under `%LOCALAPPDATA%\DeepSeekBalanceMonitor`: a credential-free `config.json` and currency-scoped `usage_log.json`. History retains the latest 10,000 samples, and adjacent samples with the same currency and balance are not written twice. `config.example.json` contains all nine accepted fields. `auto_start` defaults to `false`; this release does not create or modify Windows startup entries.
+Runtime data lives under `%LOCALAPPDATA%\DeepSeekBalanceMonitor`: a credential-free `config.json` and currency-scoped `usage_log.json`. History retains the latest 10,000 samples, and adjacent samples with the same currency and balance are not written twice. `config.example.json` contains all nine accepted fields. `auto_start` defaults to `false`. When enabled, the app manages only `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\DeepSeekBalanceMonitor.vbs`; disabling it removes only that dedicated file.
 
 Currency selection first looks for the configured `currency`. A single returned currency is a safe fallback. Multiple returned currencies without the preferred one cause an explicit error and are never added together. CNY uses `¥`, USD uses `$`, and unknown codes render as `CODE 12.34`.
 
@@ -77,4 +80,4 @@ See [SECURITY.md](SECURITY.md) for trust boundaries, residual risks, and private
 
 ## License
 
-MIT; see [LICENSE](LICENSE). DeepSeek is a trademark of its respective owner. This project is not affiliated with, sponsored by, or endorsed by DeepSeek.
+MIT; see [LICENSE](LICENSE). The whale icon is a user-selected legacy asset whose authorship, license, and redistribution permission have not been independently verified; see [NOTICE](NOTICE). DeepSeek is a trademark of its respective owner. This project is not affiliated with, sponsored by, or endorsed by DeepSeek.
