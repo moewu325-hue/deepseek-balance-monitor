@@ -290,6 +290,7 @@ class RepositoryHygieneTests(unittest.TestCase):
         self.assertIn('requires-python = ">=3.10"', text)
         self.assertRegex(text, r'"requests==2\.34\.2"')
         self.assertRegex(text, r'"Pillow==12\.3\.0"')
+        self.assertRegex(text, r'"tzdata==2026\.3"')
         self.assertIn('deepseek-balance-monitor = "deepseek_balance_monitor.cli:main"', text)
 
     def test_lockfile_is_fully_hashed_and_pinned(self) -> None:
@@ -305,6 +306,7 @@ class RepositoryHygieneTests(unittest.TestCase):
         self.assertTrue(all("--hash=sha256:" in block for block in blocks))
         self.assertRegex(text, r"(?m)^requests==2\.34\.2")
         self.assertRegex(text, r"(?m)^Pillow==12\.3\.0")
+        self.assertRegex(text, r"(?m)^tzdata==2026\.3")
 
     def test_ci_is_windows_matrix_and_has_no_deploy_or_secret_context(self) -> None:
         text = _read_index_text(".github/workflows/ci.yml")
@@ -431,6 +433,7 @@ class RepositoryHygieneTests(unittest.TestCase):
         self.assertIn("Requires-Python: >=3.10", metadata)
         self.assertIn("Requires-Dist: requests==2.34.2", metadata)
         self.assertIn("Requires-Dist: Pillow==12.3.0", metadata)
+        self.assertIn("Requires-Dist: tzdata==2026.3", metadata)
         self.assertEqual([], unsafe_text)
         forbidden = (
             "tests/",

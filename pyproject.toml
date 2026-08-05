@@ -13,6 +13,7 @@ authors = [{ name = "MoeWu" }]
 dependencies = [
     "requests==2.34.2",
     "Pillow==12.3.0",
+    "tzdata==2026.3",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
