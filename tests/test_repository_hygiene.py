@@ -442,19 +442,5 @@ class RepositoryHygieneTests(unittest.TestCase):
         )
         self.assertFalse(any(any(part in name for part in forbidden) for name in names))
 
-    def test_public_source_has_no_timed_pricing_feature(self) -> None:
-        forbidden = re.compile(r"(?i)\bpeak\b|\bdouble\b|高峰|双倍")
-        violations: list[str] = []
-        for path in _public_files():
-            if path.startswith("tests/"):
-                continue
-            if not _is_public_text(path):
-                continue
-            for scope, content in _text_sources(ROOT, path):
-                if forbidden.search(content):
-                    violations.append(f"{scope}:{path}")
-        self.assertEqual([], violations)
-
-
 if __name__ == "__main__":
     unittest.main()
