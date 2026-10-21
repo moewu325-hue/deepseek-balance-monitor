@@ -38,6 +38,6 @@
 
 ## 发布交付
 
-私有仓库：https://github.com/moewu325-hue/deepseek-balance-monitor 。Release：https://github.com/moewu325-hue/deepseek-balance-monitor/releases/tag/v2.0.0 ，对应软件源码提交 `afea54a225a5237add946de019a1032bf1d48807`。已通过 GitHub API 重新下载 Release EXE，499,712 字节，SHA-256 与本机发布产物完全一致。
+公开仓库：https://github.com/moewu325-hue/deepseek-balance-monitor（2026-10-21 按用户要求由私有改为公开） 。Release：https://github.com/moewu325-hue/deepseek-balance-monitor/releases/tag/v2.0.0 ，对应软件源码提交 `afea54a225a5237add946de019a1032bf1d48807`。已通过 GitHub API 重新下载 Release EXE，499,712 字节，SHA-256 与本机发布产物完全一致。
 
 桌面现行入口 `DeepSeekBalanceMonitor-x64.exe` 已替换旧版；旧 EXE、一次性编译器和新建测试构建目录已送入回收站。原始项目其它历史文件未作清理。当前版本的 GitHub Windows 构建记录：https://github.com/moewu325-hue/deepseek-balance-monitor/actions/runs/39585575298 。
