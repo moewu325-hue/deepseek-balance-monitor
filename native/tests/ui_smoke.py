@@ -13,6 +13,8 @@ def run(executable):
     exe = pathlib.Path(executable).resolve()
     assert exe.is_file(), f"Native executable missing: {exe}"
     user = ctypes.WinDLL("user32", use_last_error=True)
+    # 按实际像素取窗口尺寸，避免缩放导致截图裁切。
+    user.SetProcessDPIAware()
     user.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
     user.GetWindowLongW.restype = ctypes.c_long
     user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
