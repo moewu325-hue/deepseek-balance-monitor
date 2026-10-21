@@ -73,8 +73,10 @@ def run(executable):
             colors = {gdi.GetPixel(memory, x, y)
                       for x in range(5, width - 5, 3)
                       for y in range(5, height - 5, 3)}
-            assert len(colors) > 2, f"{mode}: blank render"
-            assert 0x002A170F in colors, f"{mode}: missing navy background"
+            detail = (f"pid={proc.pid} hwnd={hwnd:#x} size={width}x{height} "
+                      f"colors={len(colors)} values={sorted(colors)[:8]}")
+            assert len(colors) > 2, f"{mode}: blank render ({detail})"
+            assert 0x002A170F in colors, f"{mode}: missing navy background ({detail})"
         finally:
             gdi.SelectObject(memory, previous)
             gdi.DeleteObject(bitmap)
