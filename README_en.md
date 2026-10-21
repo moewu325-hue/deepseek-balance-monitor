@@ -1,83 +1,21 @@
-# DeepSeek Balance Monitor
+# DeepSeek Balance Monitor · Native Windows
 
-A credential-conscious Windows desktop bubble that reads a DeepSeek API account balance and displays one preferred currency.
+A compact C++17 / Win32 desktop balance monitor. Download `DeepSeekBalanceMonitor-x64.exe` from Releases and run it on Windows 10/11 x64. No Python or third-party runtime installation is required.
 
-## Introduction
+Panel, animated whale bubble and compact taskbar views share a background balance refresh. Drag the panel/bubble, double-click the bubble to expand, or right-click for refresh, display modes, masked API key input and opt-in autostart. Failed requests retain the last successful balance.
 
-The app refreshes through DeepSeek's fixed HTTPS balance endpoint and locally estimates today's balance decrease. Normal credential discovery is deliberately limited to one environment variable and one dedicated Windows credential instead of searching unrelated apps, browsers, or arbitrary configuration folders.
+Credentials come only from `DEEPSEEK_API_KEY`, the dedicated Windows Credential Manager target `DeepSeekBalanceMonitor.ApiKey`, or explicit input. Saving a typed key is optional and occurs only after successful server authentication. Keys never enter configuration, usage history or logs. HTTPS requests target only `api.deepseek.com/user/balance`, validate certificates and disable redirects.
 
-## Tech Stack
+The native app continues using `%LOCALAPPDATA%\DeepSeekBalanceMonitor\config.json` and version-2 `usage_log.json`, plus the dedicated Startup-folder VBS when explicitly enabled. Corrupt files are preserved. Amounts use fixed-point integers with six decimal places; currencies are never summed. Daily decrease is an estimate, not an official bill. Legacy peak-hour hints do not assert current model prices or billing multipliers.
 
-- Python 3.10+
-- Tkinter desktop UI
-- Requests HTTPS client
-- Windows Credential Manager
-- Pillow for icon asset validation
-
-## Quick Start
-
-1. Download or check out the source, then open a terminal in the project directory.
-2. Create and install: run `py -3.11 -m venv .venv`, then `.venv\Scripts\python -m pip install --require-hashes -r requirements.lock` and `.venv\Scripts\python -m pip install --no-build-isolation --no-deps -e .`.
-3. Start with `run_monitor.bat`, or run `.venv\Scripts\deepseek-balance-monitor.exe`.
-
-## Directory Structure
-
-```text
-deepseek-balance-monitor/
-├─ assets/
-│  └─ deepseek_icon.ico
-├─ src/
-│  └─ deepseek_balance_monitor/
-├─ tests/
-├─ config.example.json
-├─ requirements.lock
-└─ run_monitor.bat
-```
-
-## Features
-
-- Discovers credentials and fetches balances on worker threads; Tk updates stay on the main thread.
-- Calls only `https://api.deepseek.com/user/balance`, with TLS verification, redirects disabled, and bounded connect/read timeouts.
-- Excludes a rejected candidate after HTTP 401 and tries the next source; temporary network or service failures do not permanently reject it.
-- Reproduces the legacy 255×215 balance panel and 100×100 whale bubble, including click-to-expand, drag positioning, and side-to-side swimming.
-- Shows peak labels at 09:00–12:00 and 14:00–18:00 Beijing time for users in every region. The label is informational: it neither recalculates the returned balance nor doubles the usage estimate.
-- Lets the user explicitly enable or disable autostart from the context menu; it is off by default and the control is disabled while a change is pending.
-- Places collapse and `✕` in the top-right corner. Window close, menu exit, and `✕` share the same confirmation dialog.
-- Keeps daily baselines and history isolated by currency; amounts in different currencies are never added.
-- Uses a Windows named mutex to prevent duplicate instances of this version.
-
-## Configuration
-
-Runtime data lives under `%LOCALAPPDATA%\DeepSeekBalanceMonitor`: a credential-free `config.json` and currency-scoped `usage_log.json`. History retains the latest 10,000 samples, and adjacent samples with the same currency and balance are not written twice. `config.example.json` contains all nine accepted fields. `auto_start` defaults to `false`. When enabled, the app manages only `%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\DeepSeekBalanceMonitor.vbs`; disabling it removes only that dedicated file.
-
-Currency selection first looks for the configured `currency`. A single returned currency is a safe fallback. Multiple returned currencies without the preferred one cause an explicit error and are never added together. CNY uses `¥`, USD uses `$`, and unknown codes render as `CODE 12.34`.
-
-### Credential Sources and Manual Entry
-
-Normal automatic discovery follows exactly this order:
-
-1. `DEEPSEEK_API_KEY`
-2. `DeepSeekBalanceMonitor.ApiKey` in Windows Credential Manager
-
-If neither works, the UI opens a masked input. The default is process memory only. The app writes the dedicated Windows credential only when persistence is explicitly selected and the service confirms authentication. The value is sent only to the fixed DeepSeek HTTPS balance endpoint for validation. The app does not write it to configuration, history, or logs; persistence of environment variables and Windows credentials remains the responsibility of those external mechanisms.
-
-Claude-compatible sources are excluded from normal discovery. Only `deepseek-balance-monitor --migrate-claude-compat` reads compatible tokens paired with the strict official URL `https://api.deepseek.com/anthropic` (or explicit `:443`) and the known credential target. The program never executes `apiKeyHelper`.
-
-### CLI
+Build with [Zig 0.17.0](https://ziglang.org/download/), PowerShell and Python 3.10+ for tests:
 
 ```powershell
-deepseek-balance-monitor --check
-deepseek-balance-monitor --set-key
-deepseek-balance-monitor --migrate-legacy D:\path\to\legacy-directory
-deepseek-balance-monitor --migrate-claude-compat
+.\native\build.ps1 -Test
+.\native\build.ps1 -Test -Live
+.\build\native\DeepSeekBalanceMonitor.exe --check
 ```
 
-`--set-key` uses hidden input and defaults to no persistence. Legacy migration copies only the documented non-sensitive fields and balance history, forces `auto_start=false`, and drops API keys and unknown fields. If a legacy version stored a plaintext key, rotate that key in the DeepSeek console after migration.
+Output: `build\native\DeepSeekBalanceMonitor.exe`. Python is needed only for tests. An additional MSVC CMake project is available in `native/`; the release build verified here uses Zig. See [verification](docs/native-verification.md), [dependencies](native/DEPENDENCIES.md), [MIT license](LICENSE) and [icon notice](NOTICE).
 
-## Security
-
-See [SECURITY.md](SECURITY.md) for trust boundaries, residual risks, and private reporting instructions. Before publishing a fork, run the complete test suite and keep machine-local configuration, history, and credentials out of Git.
-
-## License
-
-MIT; see [LICENSE](LICENSE). The whale icon is a user-selected legacy asset whose authorship, license, and redistribution permission have not been independently verified; see [NOTICE](NOTICE). DeepSeek is a trademark of its respective owner. This project is not affiliated with, sponsored by, or endorsed by DeepSeek.
+The original Python implementation is retained as migration source. Its pre-existing test differences are documented; the native application is the maintained release. Inspired by the system-API architecture of [CodexUsageBar](https://github.com/luodaoyi/codex-useage-win), with independently written native code. Not affiliated with DeepSeek.

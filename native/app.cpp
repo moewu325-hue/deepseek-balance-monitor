@@ -47,7 +47,7 @@ void Position(App& app,bool restore=false) {
         RECT codex{};
         if (FindCodexRect(codex)) { x=codex.right-width; y=codex.top-Px(app,80)-height; }
     }
-    MONITORINFO monitor{sizeof(monitor)};
+    MONITORINFO monitor{}; monitor.cbSize=sizeof(monitor);
     const POINT point{x,y};
     if (GetMonitorInfoW(MonitorFromPoint(point,MONITOR_DEFAULTTONEAREST),&monitor)) work=monitor.rcWork;
     x=std::max(static_cast<int>(work.left),std::min(x,static_cast<int>(work.right)-width));

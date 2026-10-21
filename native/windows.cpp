@@ -108,7 +108,12 @@ bool AtomicWrite(const std::wstring& path,const std::string& content) {
     if(!CloseHandle(file)) ok=false;
     if(ok) ok=MoveFileExW(temporary.c_str(),path.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)!=FALSE;
     if(!ok) DeleteFileW(temporary.c_str());
-    if(ok) { std::string verified; ok=ReadText(path,verified,content.size()+3) && verified==content; }
+    if(ok) {
+        std::string verified;
+        std::string expected=content;
+        if(expected.size()>=3 && expected.compare(0,3,"\xef\xbb\xbf")==0) expected.erase(0,3);
+        ok=ReadText(path,verified,content.size()+3) && verified==expected;
+    }
     return ok;
 }
 static bool Missing(const std::wstring& path) {

@@ -1,54 +1,35 @@
-name: CI
-
-on:
-  push:
-    branches: [main]
-  pull_request:
-
+name: Native Windows CI
+on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
-
 jobs:
-  test:
+  native:
     runs-on: windows-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
-
+    timeout-minutes: 25
     steps:
-      - name: Check out source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          fetch-depth: 0
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-
-      - name: Install locked dependencies
-        run: python -m pip install --require-hashes -r requirements.lock
-
-      - name: Install project
-        run: python -m pip install --no-build-isolation --no-deps -e .
-
-      - name: Run tests
-        run: python -m unittest discover -s tests -v
-
-      - name: Compile sources
-        run: python -m compileall -q src deepseek_monitor.py
-
-      - name: Import package
-        run: python -c "import deepseek_balance_monitor; import deepseek_balance_monitor.cli"
-
-      - name: Check command help
-        run: deepseek-balance-monitor --help
-
-      - name: Check missing-credential exit code
+          python-version: '3.12'
+      - name: Install verified Zig compiler
         shell: pwsh
         run: |
-          deepseek-balance-monitor --check
-          if ($LASTEXITCODE -ne 1) { exit 1 }
-          exit 0
+          $archive = Join-Path $env:RUNNER_TEMP 'zig.zip'
+          Invoke-WebRequest 'https://ziglang.org/download/0.17.0/zig-x86_64-windows-0.17.0.zip' -OutFile $archive
+          if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne 'b5663f69581dcf391293fbf16c06cb80d81d806545ce618b4d0bab7f0eb8c428') { throw 'Compiler checksum mismatch' }
+          python -c "import zipfile; zipfile.ZipFile(r'$archive').extractall(r'$env:RUNNER_TEMP')"
+          "ZIG_EXE=$env:RUNNER_TEMP\zig-x86_64-windows-0.17.0\zig.exe" >> $env:GITHUB_ENV
+      - name: Verify vendored JSON header
+        shell: pwsh
+        run: |
+          if ((Get-FileHash native/third_party/json.hpp -Algorithm SHA256).Hash -ne 'aaf127c04cb31c406e5b04a63f1ae89369fccde6d8fa7cdda1ed4f32dfc5de63') { throw 'JSON header checksum mismatch' }
+      - name: Build and test
+        shell: pwsh
+        run: ./native/build.ps1 -Test
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DeepSeekBalanceMonitor-x64
+          path: build/native/DeepSeekBalanceMonitor.exe
+          if-no-files-found: error

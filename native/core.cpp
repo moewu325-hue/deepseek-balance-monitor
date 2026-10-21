@@ -157,8 +157,17 @@ static bool Timestamp(const std::string& text) {
     if (text.size() < 19 || text.size() > 40 || !Date(text.substr(0,10)) || text[10] != 'T' || text[13] != ':' || text[16] != ':') return false;
     for (size_t i = 11; i < 19; ++i) if (i != 13 && i != 16 && (text[i] < '0' || text[i] > '9')) return false;
     int h=0,m=0,s=0; if (std::sscanf(text.c_str()+11,"%2d:%2d:%2d",&h,&m,&s) != 3 || h>23 || m>59 || s>59) return false;
-    for (size_t i=19;i<text.size();++i) { char c=text[i]; if (!((c>='0'&&c<='9')||c=='.'||c=='+'||c=='-'||c==':'||c=='Z')) return false; }
-    return true;
+    size_t i=19;
+    if (i<text.size() && text[i]=='.') {
+        size_t first=++i;
+        while(i<text.size() && text[i]>='0' && text[i]<='9') ++i;
+        if(i==first || i-first>6) return false;
+    }
+    if(i==text.size()) return true;
+    if(text[i]=='Z') return i+1==text.size();
+    if((text[i]!='+' && text[i]!='-') || text.size()-i!=6 || text[i+3]!=':') return false;
+    for(size_t j : {i+1,i+2,i+4,i+5}) if(text[j]<'0' || text[j]>'9') return false;
+    return (text[i+1]-'0')*10+text[i+2]-'0'<=23 && (text[i+4]-'0')*10+text[i+5]-'0'<=59;
 }
 bool ParseHistory(const std::string& text, History& output) {
     Json value; if (!ParseJson(text, value)) return false;

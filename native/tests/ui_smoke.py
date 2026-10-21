@@ -7,11 +7,22 @@ import subprocess
 import sys
 import time
 import tempfile
+import hashlib
 
 
 def run(executable):
     exe = pathlib.Path(executable).resolve()
     assert exe.is_file(), f"Native executable missing: {exe}"
+    # 系统目录 API 不受 LOCALAPPDATA 覆盖影响，核对真实文件哈希。
+    shell = ctypes.WinDLL("shell32")
+    actual_folder = ctypes.create_unicode_buffer(260)
+    assert shell.SHGetFolderPathW(None, 0x1C, None, 0, actual_folder) == 0
+    actual_root = pathlib.Path(actual_folder.value) / "DeepSeekBalanceMonitor"
+    def state():
+        return {name: hashlib.sha256((actual_root / name).read_bytes()).hexdigest()
+                if (actual_root / name).is_file() else None
+                for name in ("config.json", "usage_log.json")}
+    before_state = state()
     user = ctypes.WinDLL("user32", use_last_error=True)
     # 按实际像素取窗口尺寸，避免缩放导致截图裁切。
     user.SetProcessDPIAware()
@@ -108,6 +119,8 @@ def run(executable):
                               env=environment, timeout=5).returncode == 0
         assert not list(pathlib.Path(sandbox).iterdir()), "Smoke wrote persistent state"
     print("PASS invalid modes/durations and smoke isolation")
+    assert state() == before_state, "Smoke changed actual user configuration/history"
+    print("PASS actual user data hashes unchanged")
 
 
 if __name__ == "__main__":

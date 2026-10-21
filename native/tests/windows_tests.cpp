@@ -30,14 +30,18 @@ int wmain(int argc,wchar_t** argv) {
     CHECK(interrupted);
     CHECK(ReadText(path,content) && content=="before");
     CHECK(AtomicWrite(path,"recovered")); CHECK(ReadText(path,content) && content=="recovered");
+    CHECK(AtomicWrite(path,"\xef\xbb\xbf" "UTF8")); CHECK(ReadText(path,content) && content=="UTF8");
     Config config; CHECK(LoadConfig(root,config)); config.display_mode="taskbar";
     CHECK(SaveConfig(root,config)); Config copy; CHECK(LoadConfig(root,copy) && copy.display_mode=="taskbar");
     CHECK(AtomicWrite(root+L"\\config.json","{")); CHECK(!LoadConfig(root,copy));
     WIN32_FIND_DATAW entry{}; HANDLE search=FindFirstFileW((root+L"\\*").c_str(),&entry);
     if (search!=INVALID_HANDLE_VALUE) { do { if (!(entry.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY)) DeleteFileW((root+L"\\"+entry.cFileName).c_str()); } while (FindNextFileW(search,&entry)); FindClose(search); }
     RemoveDirectoryW(root.c_str());
-    auto result=FetchBalance(L"synthetic-invalid-key");
-    CHECK(!result.ok && result.http_status==401);
-    std::printf("%d checks, %d failures; HTTP %lu; crash injection %s\n",checks,failures,result.http_status,interrupted?"passed":"failed");
+    unsigned long status=0;
+    if(argc==2 && std::wstring(argv[1])==L"--live") {
+        auto result=FetchBalance(L"synthetic-invalid-key"); status=result.http_status;
+        CHECK(!result.ok && result.http_status==401);
+    }
+    std::printf("%d checks, %d failures; live HTTP %lu; crash injection %s\n",checks,failures,status,interrupted?"passed":"failed");
     return failures?1:0;
 }

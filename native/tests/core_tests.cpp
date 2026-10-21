@@ -49,6 +49,7 @@ int main() {
     CHECK(ParseHistory(SerializeHistory(history), copy) && copy.records.size() == history.records.size());
     CHECK(!ParseHistory(R"({"schema_version":1})", copy));
     CHECK(!ParseHistory(R"({"schema_version":2,"baselines":{},"records":[{"time":"bad","currency":"CNY","total_balance":"1"}]})", copy));
+    CHECK(!ParseHistory(R"({"schema_version":2,"baselines":{},"records":[{"time":"2026-10-21T12:00:00---","currency":"CNY","total_balance":"1"}]})", copy));
     CHECK(Wide(Utf8(L"中文 ¥")) == L"中文 ¥");
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
