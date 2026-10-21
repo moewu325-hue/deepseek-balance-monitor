@@ -31,6 +31,7 @@ _CONFIG_FIELDS = (
     "snap_edge",
     "collapsed",
     "auto_start",
+    "display_mode",
 )
 _LEGACY_CONFIG_FIELDS = _CONFIG_FIELDS[:-1]
 
@@ -66,6 +67,7 @@ class AppConfig:
     snap_edge: str | None = None
     collapsed: bool = False
     auto_start: bool = False
+    display_mode: str = "panel"
 
 
 @dataclass(frozen=True)
@@ -224,6 +226,7 @@ def _config_from_mapping(raw: Mapping[str, Any]) -> AppConfig:
         snap_edge=_optional_string(raw.get("snap_edge", defaults.snap_edge)),
         collapsed=_boolean(raw.get("collapsed", defaults.collapsed)),
         auto_start=_boolean(raw.get("auto_start", defaults.auto_start)),
+        display_mode=_display_mode(raw.get("display_mode", defaults.display_mode)),
     )
 
 
@@ -483,3 +486,9 @@ def _boolean(value: Any) -> bool:
     if not isinstance(value, bool):
         raise ValueError("Expected a boolean")
     return value
+
+
+def _display_mode(value: Any) -> str:
+    if value not in {"panel", "bubble", "taskbar"}:
+        raise ValueError("Expected display_mode in panel/bubble/taskbar")
+    return str(value)

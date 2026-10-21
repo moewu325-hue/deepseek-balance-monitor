@@ -17,6 +17,9 @@ def to_shanghai(now: datetime | None = None) -> datetime:
 
 def is_peak_hour(now: datetime | None = None) -> bool:
     local = to_shanghai(now)
+    # 周末(周六/周日)全天按低谷价,不区分峰谷时段
+    if local.weekday() >= 5:
+        return False
     minutes = local.hour * 60 + local.minute
     return 9 * 60 <= minutes < 12 * 60 or 14 * 60 <= minutes < 18 * 60
 

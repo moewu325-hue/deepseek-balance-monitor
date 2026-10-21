@@ -31,6 +31,13 @@ class PeakScheduleTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "timezone-aware"):
             is_peak_hour(datetime(2026, 8, 5, 9, 0))
 
+    def test_weekends_are_always_off_peak(self) -> None:
+        tz = ZoneInfo("Asia/Shanghai")
+        self.assertFalse(is_peak_hour(datetime(2026, 8, 8, 9, 30, tzinfo=tz)))  # 周六高峰段
+        self.assertFalse(is_peak_hour(datetime(2026, 8, 8, 14, 30, tzinfo=tz)))  # 周六高峰段
+        self.assertFalse(is_peak_hour(datetime(2026, 8, 9, 9, 0, tzinfo=tz)))  # 周日高峰起点
+        self.assertTrue(is_peak_hour(datetime(2026, 8, 7, 9, 30, tzinfo=tz)))  # 周五高峰段仍生效
+
     def test_labels_are_exact(self) -> None:
         tz = ZoneInfo("Asia/Shanghai")
         self.assertEqual(

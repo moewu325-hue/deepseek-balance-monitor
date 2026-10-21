@@ -19,6 +19,7 @@ from .storage import AppConfig
 
 
 FULL_WIDTH, FULL_HEIGHT = 255, 215
+TASKBAR_WIDTH, TASKBAR_HEIGHT = 184, 46  # 仿 CodexUsageBar 尺寸
 BG_DARK, BG_PANEL = "#060b18", "#0c1430"
 CYBER_1, CYBER_2, CYBER_3 = "#00e5ff", "#2979ff", "#7c4dff"
 TEXT_MAIN, TEXT_DIM = "#e0f7ff", "#4a6d8c"
@@ -40,6 +41,27 @@ _COLLAPSE_CENTER = (221, 12)
 _EXIT_CENTER = (242, 12)
 
 
+def _round_rect(
+    canvas: Any, x1: float, y1: float, x2: float, y2: float, r: float, **kwargs: Any
+) -> int:
+    """在 Canvas 上绘制圆角矩形,返回形状 id。"""
+    points = [
+        x1 + r, y1,
+        x2 - r, y1,
+        x2, y1,
+        x2, y1 + r,
+        x2, y2 - r,
+        x2, y2,
+        x2 - r, y2,
+        x1 + r, y2,
+        x1, y2,
+        x1, y2 - r,
+        x1, y1 + r,
+        x1, y1,
+    ]
+    return canvas.create_polygon(points, smooth=True, **kwargs)
+
+
 @dataclass(frozen=True)
 class PanelState:
     display: BalanceDisplay | None = None
@@ -57,6 +79,7 @@ class CanvasCallbacks:
     set_collapsed: Callable[[bool], None]
     save_position: Callable[[int, int, bool], None]
     set_autostart: Callable[[bool], None]
+    set_display_mode: Callable[[str], None] | None = None
 
 
 class _BooleanState:
@@ -623,10 +646,25 @@ class CanvasMonitorView:
         if self._closed or self._tk is None or not hasattr(self._tk, "Menu"):
             return
         menu = self._tk.Menu(self._root, tearoff=0)
-        if self._collapsed:
-            menu.add_command(label="展开", command=lambda: self.set_collapsed(False))
-        else:
-            menu.add_command(label="缩小为气泡", command=lambda: self.set_collapsed(True))
+        # 显示模式:面板 / 气泡 / 任务栏
+        current = "bubble" if self._collapsed else "panel"
+        mode_menu = self._tk.Menu(menu, tearoff=0)
+        mode_menu.add_command(
+            label="面板",
+            command=lambda: self._request_display_mode("panel"),
+        )
+        mode_menu.add_command(
+            label="气泡",
+            command=lambda: self._request_display_mode("bubble"),
+        )
+        mode_menu.add_command(
+            label="任务栏",
+            command=lambda: self._request_display_mode("taskbar"),
+        )
+        mode_menu.entryconfig(
+            {"panel": 0, "bubble": 1, "taskbar": 2}[current], state="disabled"
+        )
+        menu.add_cascade(label="显示模式", menu=mode_menu)
         menu.add_separator()
         menu.add_command(label="立即刷新", command=self._callbacks.refresh)
         if not self._collapsed:
@@ -651,6 +689,11 @@ class CanvasMonitorView:
         if not self._autostart_pending:
             self._callbacks.set_autostart(bool(self._autostart_var.get()))
 
+    def _request_display_mode(self, mode: str) -> None:
+        callback = self._callbacks.set_display_mode
+        if callback is not None:
+            callback(mode)
+
     @staticmethod
     def hit_test(x: int, y: int) -> str | None:
         if 212 <= x <= 230 and 3 <= y <= 21:
@@ -658,6 +701,168 @@ class CanvasMonitorView:
         if 233 <= x <= 252 and 3 <= y <= 21:
             return "exit"
         return None
+
+
+class TaskbarView:
+    """任务栏薄条:标题 + 余额金额 + 迷你进度条,仿 CodexUsageBar 样式。
+
+    与面板/气泡视图接口一致(render / set_autostart_state / close / collapsed),
+    由 BubbleApp 按 display_mode 决定创建或切换。
+    """
+
+    _TITLE = "DeepSeek 余额"
+    _FONT_TITLE = ("Microsoft YaHei UI", 8)
+    _FONT_VALUE = ("Microsoft YaHei UI", 9, "bold")
+
+    def __init__(
+        self,
+        root: Any,
+        *,
+        config: AppConfig,
+        callbacks: CanvasCallbacks,
+        tk_module: Any | None = None,
+    ) -> None:
+        self._root = root
+        self._config = config
+        self._callbacks = callbacks
+        self._closed = False
+        self._dragging = False
+        self._drag_start: tuple[int, int] | None = None
+        self._drag_origin: tuple[int, int] | None = None
+        self._state = PanelState()
+        if tk_module is None:
+            import tkinter as tk_module
+        self._tk = tk_module
+        self._canvas = tk_module.Canvas(
+            root,
+            width=TASKBAR_WIDTH,
+            height=TASKBAR_HEIGHT,
+            bg=BG_DARK,
+            highlightthickness=0,
+            bd=0,
+        )
+        self._canvas.pack(fill="both", expand=True)
+        self._bind_events()
+
+    @property
+    def collapsed(self) -> bool:
+        return False
+
+    def set_autostart_state(self, enabled: bool, *, pending: bool = False) -> None:
+        pass
+
+    def render(self, state: PanelState, *, now: datetime | None = None) -> None:
+        self._state = state
+        if self._closed:
+            return
+        self._draw()
+
+    def close(self) -> None:
+        self._closed = True
+
+    def _bind_events(self) -> None:
+        canvas = self._canvas
+        canvas.bind("<ButtonPress-1>", self._press)
+        canvas.bind("<B1-Motion>", self._drag)
+        canvas.bind("<ButtonRelease-1>", self._release)
+        canvas.bind("<Button-3>", self._show_context_menu)
+
+    def _press(self, event: Any) -> None:
+        if self._closed:
+            return
+        self._dragging = True
+        self._drag_start = (int(event.x_root), int(event.y_root))
+        self._drag_origin = (self._root.winfo_x(), self._root.winfo_y())
+
+    def _drag(self, event: Any) -> None:
+        if not self._dragging or self._drag_start is None or self._drag_origin is None:
+            return
+        dx = int(event.x_root) - self._drag_start[0]
+        dy = int(event.y_root) - self._drag_start[1]
+        x = self._drag_origin[0] + dx
+        y = self._drag_origin[1] + dy
+        self._root.geometry(f"{TASKBAR_WIDTH}x{TASKBAR_HEIGHT}+{x}+{y}")
+
+    def _release(self, event: Any) -> None:
+        if not self._dragging:
+            return
+        self._dragging = False
+        self._callbacks.save_position(
+            self._root.winfo_x(),
+            self._root.winfo_y(),
+            False,
+        )
+
+    def _show_context_menu(self, event: Any) -> None:
+        if self._closed or self._tk is None or not hasattr(self._tk, "Menu"):
+            return
+        menu = self._tk.Menu(self._root, tearoff=0)
+        mode_menu = self._tk.Menu(menu, tearoff=0)
+        for label, mode in (("面板", "panel"), ("气泡", "bubble"), ("任务栏", "taskbar")):
+            mode_menu.add_command(
+                label=label,
+                command=lambda m=mode: self._request_display_mode(m),
+            )
+        mode_menu.entryconfig(2, state="disabled")
+        menu.add_cascade(label="显示模式", menu=mode_menu)
+        menu.add_separator()
+        menu.add_command(label="立即刷新", command=self._callbacks.refresh)
+        menu.add_separator()
+        menu.add_command(label="退出", command=self._callbacks.request_exit)
+        try:
+            menu.tk_popup(int(event.x_root), int(event.y_root))
+        finally:
+            try:
+                menu.grab_release()
+            except Exception:
+                pass
+
+    def _request_display_mode(self, mode: str) -> None:
+        callback = self._callbacks.set_display_mode
+        if callback is not None:
+            callback(mode)
+
+    def _draw(self) -> None:
+        canvas = self._canvas
+        canvas.delete("all")
+        w, h = TASKBAR_WIDTH, TASKBAR_HEIGHT
+        _round_rect(
+            canvas, 1, 1, w - 1, h - 1, 12,
+            fill=BG_PANEL, outline="#1b2c50", width=1,
+        )
+        canvas.create_text(
+            12, h // 2, text=self._TITLE, anchor="w",
+            font=self._FONT_TITLE, fill=TEXT_DIM,
+        )
+        # 高峰期双倍消费状态(9-12 点 / 14-18 点上海时间),窄条仅显示字符
+        if is_peak_hour():
+            peak_label = "▲"
+            peak_color = PEAK_WARN
+        else:
+            peak_label = "●"
+            peak_color = STAT_GREEN
+        canvas.create_text(
+            96, h // 2, text=peak_label, anchor="w",
+            font=self._FONT_TITLE, fill=peak_color,
+        )
+        # 余额金额(右侧)
+        display = self._state.display
+        available = bool(display is not None and display.available)
+        if available:
+            text = display.balance_text
+            try:
+                low = Decimal(self._config.low_balance_warning)
+                low_balance = display.total_balance < low
+            except Exception:
+                low_balance = False
+            color = STAT_RED if low_balance else CYBER_1
+        else:
+            text = "—"
+            color = STAT_RED
+        canvas.create_text(
+            w - 12, h // 2, text=text, anchor="e",
+            font=self._FONT_VALUE, fill=color,
+        )
 
 
 def draw_panel(

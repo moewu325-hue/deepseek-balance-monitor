@@ -18,7 +18,12 @@ from .canvas_ui import (
     BG_DARK,
     CanvasCallbacks,
     CanvasMonitorView,
+    FULL_HEIGHT,
+    FULL_WIDTH,
     PanelState,
+    TASKBAR_HEIGHT,
+    TASKBAR_WIDTH,
+    TaskbarView,
     load_whale_frames,
 )
 from .credentials import (
@@ -46,6 +51,7 @@ from .storage import (
     load_usage_log,
     save_usage_log_atomic,
 )
+from .windows import find_codex_rect, set_toolwindow
 
 
 HISTORY_RETENTION_LIMIT = 10_000
@@ -57,10 +63,14 @@ def _load_whale_ui_frames(root: Any) -> tuple[Any, ...]:
     except Exception:
         return ()
 
-    candidates = (
-        Path(__file__).resolve().parents[2] / "assets" / "deepseek_icon.ico",
-        Path(sys.prefix) / "share" / "deepseek-balance-monitor" / "deepseek_icon.ico",
-    )
+    candidates: list[Path] = []
+    # PyInstaller onefile 打包后,资源解压到 sys._MEIPASS/assets/;
+    # 源码运行时 __file__.parents[2] 才指到项目根目录。
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(Path(meipass) / "assets" / "deepseek_icon.ico")
+    candidates.append(Path(__file__).resolve().parents[2] / "assets" / "deepseek_icon.ico")
+    candidates.append(Path(sys.prefix) / "share" / "deepseek-balance-monitor" / "deepseek_icon.ico")
     for icon_path in candidates:
         if not icon_path.is_file():
             continue
@@ -375,6 +385,47 @@ class _NullSettings:
         pass
 
 
+def _window_geometry(root: Any, config: AppConfig) -> tuple[int, int, int, int]:
+    """按显示模式返回窗口初始几何 (x, y, w, h)。"""
+    if config.display_mode == "taskbar":
+        # 任务栏模式:右缘与 CodexUsageBar 对齐,叠其上方第二条
+        w, h = TASKBAR_WIDTH, TASKBAR_HEIGHT
+        screen_w = root.winfo_screenwidth()
+        screen_h = root.winfo_screenheight()
+        codex = find_codex_rect()
+        if codex is not None:
+            x = max(0, codex[0] + codex[2] - w)
+            y = max(0, codex[1] - h * 2 - 8)
+        else:
+            x = max(0, screen_w - w - 24)
+            y = max(0, screen_h - h * 2 - 64)
+        return x, y, w, h
+    # 面板 / 气泡共用面板尺寸(气泡几何由视图内部切换)
+    x = 40 if config.window_x is None else config.window_x
+    y = 80 if config.window_y is None else config.window_y
+    return x, y, FULL_WIDTH, FULL_HEIGHT
+
+
+def _create_view(
+    root: Any,
+    config: AppConfig,
+    callbacks: CanvasCallbacks,
+    tk_module: Any | None,
+) -> Any:
+    """按显示模式创建视图:气泡/面板用 CanvasMonitorView,任务栏用 TaskbarView。"""
+    if config.display_mode == "taskbar":
+        return TaskbarView(root, config=config, callbacks=callbacks, tk_module=tk_module)
+    # 统一由 display_mode 决定初始折叠状态,避免与旧 collapsed 字段不一致
+    view_config = replace(config, collapsed=(config.display_mode == "bubble"))
+    return CanvasMonitorView(
+        root,
+        config=view_config,
+        callbacks=callbacks,
+        tk_module=tk_module,
+        whale_frames=_load_whale_ui_frames(root),
+    )
+
+
 class BubbleApp:
     def __init__(
         self,
@@ -399,6 +450,7 @@ class BubbleApp:
             import tkinter as tk_module
 
         self._root = root
+        self._tk = tk_module
         self._controller = controller
         self._history = history
         self._settings = settings if settings is not None else _NullSettings()
@@ -432,12 +484,13 @@ class BubbleApp:
         self._view_state = PanelState(status_text="CONNECTING...")
 
         root.overrideredirect(True)
+        # 仿 CodexUsageBar 恒置顶,始终置于屏幕前
         root.attributes("-topmost", True)
         root.attributes("-alpha", config.opacity)
         root.configure(bg=BG_DARK)
-        x = 40 if config.window_x is None else config.window_x
-        y = 80 if config.window_y is None else config.window_y
-        root.geometry(f"255x215+{x}+{y}")
+        x, y, w, h = _window_geometry(root, config)
+        root.geometry(f"{w}x{h}+{x}+{y}")
+        set_toolwindow(root)
 
         callbacks = CanvasCallbacks(
             refresh=self._request_refresh,
@@ -446,15 +499,11 @@ class BubbleApp:
             set_collapsed=self._set_collapsed,
             save_position=self._save_position,
             set_autostart=self._set_autostart,
+            set_display_mode=self._set_display_mode,
         )
+        self._callbacks = callbacks
         if view is None:
-            view = CanvasMonitorView(
-                root,
-                config=config,
-                callbacks=callbacks,
-                tk_module=tk_module,
-                whale_frames=_load_whale_ui_frames(root),
-            )
+            view = _create_view(root, config, callbacks, tk_module)
         self._view = view
         self._view.set_autostart_state(config.auto_start, pending=False)
         self._view.render(self._view_state)
@@ -735,6 +784,44 @@ class BubbleApp:
             self._settings.request_save(self._config)
         except RuntimeError:
             pass
+
+    def _set_display_mode(self, mode: str) -> None:
+        """面板 / 气泡 / 任务栏三模式切换:销毁旧视图并重建目标视图。"""
+        self._assert_main_thread()
+        if self._closed or mode not in ("panel", "bubble", "taskbar"):
+            return
+        if mode == self._config.display_mode:
+            return
+        # 关闭并销毁旧视图
+        try:
+            self._view.close()
+        except Exception:
+            pass
+        canvas = getattr(self._view, "_canvas", None)
+        if canvas is not None:
+            try:
+                canvas.destroy()
+            except Exception:
+                pass
+        try:
+            self._root.attributes("-transparentcolor", "")
+        except Exception:
+            pass
+        new_config = replace(
+            self._config,
+            display_mode=mode,
+            collapsed=(mode == "bubble"),
+        )
+        self._config = new_config
+        self._view = _create_view(self._root, new_config, self._callbacks, self._tk)
+        x, y, w, h = _window_geometry(self._root, new_config)
+        self._root.geometry(f"{w}x{h}+{x}+{y}")
+        try:
+            self._settings.request_save(new_config)
+        except RuntimeError:
+            pass
+        self._view.set_autostart_state(new_config.auto_start, pending=False)
+        self._view.render(self._view_state)
 
     def _set_autostart(self, enabled: bool) -> None:
         self._assert_main_thread()
