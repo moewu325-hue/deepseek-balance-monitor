@@ -35,3 +35,9 @@
 原有 Python 工作区差异的源文件 diff 哈希在实现前后均为 `c60227e1335011e253c09edc8f2819c7e65d994d`，旧修改完整保留。迁移前 Python 基线为 216 项，存在 3 个失败和 3 个错误：两个旧 allowlist 断言未包含 display_mode、三个 fake UI 与新增显示模式/窗口 API 不匹配、离线 wheel 的 setuptools 版本不匹配。原生 CI 独立验证新版本；旧 Python CI 保留为手动迁移参考。
 
 本轮编译器、核验截图、构建测试二进制与一次性状态文件在交付后清理；Git 中保留源代码、可复跑构建脚本、测试、依赖许可证及本记录。
+
+## 发布交付
+
+私有仓库：https://github.com/moewu325-hue/deepseek-balance-monitor 。Release：https://github.com/moewu325-hue/deepseek-balance-monitor/releases/tag/v2.0.0 ，对应软件源码提交 `afea54a225a5237add946de019a1032bf1d48807`。已通过 GitHub API 重新下载 Release EXE，499,712 字节，SHA-256 与本机发布产物完全一致。
+
+桌面现行入口 `DeepSeekBalanceMonitor-x64.exe` 已替换旧版；旧 EXE、一次性编译器和新建测试构建目录已送入回收站。原始项目其它历史文件未作清理。当前版本的 GitHub Windows 构建记录：https://github.com/moewu325-hue/deepseek-balance-monitor/actions/runs/39585575298 。
