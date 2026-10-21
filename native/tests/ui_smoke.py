@@ -36,7 +36,7 @@ def run(executable):
     gdi.DeleteObject.argtypes = [wintypes.HANDLE]
     gdi.DeleteDC.argtypes = [wintypes.HDC]
     for mode in ("panel", "bubble", "taskbar"):
-        proc = subprocess.Popen([str(exe), f"--smoke-test={mode}"])
+        proc = subprocess.Popen([str(exe), f"--smoke-test={mode}", "--smoke-ms=2000"])
         found = []
         @callback
         def visit(hwnd, _):
@@ -69,12 +69,24 @@ def run(executable):
         bitmap = gdi.CreateCompatibleBitmap(screen, width, height)
         previous = gdi.SelectObject(memory, bitmap)
         try:
-            assert user.PrintWindow(hwnd, memory, 2), f"{mode}: PrintWindow failed"
-            colors = {gdi.GetPixel(memory, x, y)
-                      for x in range(5, width - 5, 3)
-                      for y in range(5, height - 5, 3)}
+            # 窗口可见早于首帧就绪，按像素条件限时等待。
+            render_deadline = time.monotonic() + .5
+            colors = set()
+            printed = False
+            while True:
+                printed = bool(user.PrintWindow(hwnd, memory, 2))
+                if printed:
+                    colors = {gdi.GetPixel(memory, x, y)
+                              for x in range(5, width - 5, 3)
+                              for y in range(5, height - 5, 3)}
+                if printed and len(colors) > 2 and 0x002A170F in colors:
+                    break
+                if time.monotonic() >= render_deadline:
+                    break
+                time.sleep(.01)
             detail = (f"pid={proc.pid} hwnd={hwnd:#x} size={width}x{height} "
                       f"colors={len(colors)} values={sorted(colors)[:8]}")
+            assert printed, f"{mode}: PrintWindow failed ({detail})"
             assert len(colors) > 2, f"{mode}: blank render ({detail})"
             assert 0x002A170F in colors, f"{mode}: missing navy background ({detail})"
         finally:
