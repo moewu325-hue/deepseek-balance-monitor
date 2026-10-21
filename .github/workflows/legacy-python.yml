@@ -49,4 +49,3 @@ jobs:
           deepseek-balance-monitor --check
           if ($LASTEXITCODE -ne 1) { exit 1 }
           exit 0
-
