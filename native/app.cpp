@@ -1,4 +1,5 @@
 #include "windows.hpp"
+#include "animation.hpp"
 #include <shellapi.h>
 #include <algorithm>
 #include <cmath>
@@ -7,6 +8,7 @@
 namespace ds {
 namespace {
 constexpr UINT Done = WM_APP + 1;
+constexpr UINT SmokeFrame = WM_APP + 2;
 constexpr int Refresh=101, Panel=102, Bubble=103, Taskbar=104, Console=105, Key=106, Startup=107, Exit=108;
 const wchar_t* ClassName=L"DeepSeekNativeMonitor";
 const wchar_t* KeyClass=L"DeepSeekNativeKey";
@@ -25,11 +27,22 @@ struct App {
     bool smoke=false, busy=false, closing=false, persist=false;
     bool configWritable=true, historyWritable=true, dragging=false, moved=false;
     POINT dragPoint{}, dragOrigin{};
-    int scale=96, tick=0, smokeMs=1200;
+    int scale=96, smokeMs=1200;
+    bool peak=false;
+    ULONGLONG animationStarted=0, lastAnchor=0;
+    int64_t smokeElapsed=-1;
     int64_t decrease=0;
 };
 int Px(const App& app,int value) { return MulDiv(value,app.scale,96); }
 void Redraw(App& app) { InvalidateRect(app.hwnd,nullptr,FALSE); }
+void AnimationTimer(App& app) {
+    KillTimer(app.hwnd,2);
+    if (app.config.display_mode=="bubble") SetTimer(app.hwnd,2,33,nullptr);
+}
+void UpdatePeak(App& app) {
+    const bool peak=app.smoke && app.smokeElapsed>=0?app.peak:IsPeakHour();
+    if (peak!=app.peak) { app.peak=peak; Redraw(app); }
+}
 void SaveSettings(App& app) {
     if (!app.smoke && app.configWritable && !SaveConfig(app.root,app.config)) {
         app.status=L"配置保存失败"; Redraw(app);
@@ -59,7 +72,7 @@ void Position(App& app,bool restore=false) {
 void Mode(App& app,const char* mode) {
     app.config.display_mode=mode;
     app.config.collapsed=app.config.display_mode=="bubble";
-    Position(app); SaveSettings(app); Redraw(app);
+    Position(app); AnimationTimer(app); SaveSettings(app); Redraw(app);
 }
 DWORD WINAPI FetchThread(void* context) {
     auto& app=*static_cast<App*>(context);
@@ -124,6 +137,43 @@ void Fill(HDC dc,const App& app,int x,int y,int w,int h,COLORREF color,int radiu
     else Rectangle(dc,Px(app,x),Px(app,y),Px(app,x+w),Px(app,y+h));
     SelectObject(dc,oldBrush); SelectObject(dc,oldPen); DeleteObject(brush);
 }
+void PeakLamp(HDC dc,const App& app,int x,int y,int radius,int textWidth,int size) {
+    const auto indicator=PeakIndicator(app.peak);
+    Fill(dc,app,x-radius,y-radius,radius*2+1,radius*2+1,indicator.color,radius*2+1);
+    Text(dc,app,indicator.label,x+radius+5,y-8,textWidth,16,size,indicator.color);
+}
+void PaintWhale(HDC dc,const App& app,int64_t elapsed) {
+    elapsed=std::max<int64_t>(0,elapsed)%16000;
+    const auto frame=WhaleAt(elapsed);
+    Fill(dc,app,6,31,60,12,RGB(20,39,66));
+    HBRUSH brush=CreateSolidBrush(RGB(91,149,255));
+    auto oldBrush=SelectObject(dc,brush), oldPen=SelectObject(dc,GetStockObject(NULL_PEN));
+    auto point=[&](double x,double y) {
+        return POINT{Px(app,static_cast<int>(std::lround(frame.x+(frame.facing_right?x:-x)))),
+                     Px(app,static_cast<int>(std::lround(frame.y+y)))};
+    };
+    POINT tail[]={point(-10,0),point(-15,-2+frame.tail),point(-16,-6+frame.tail),
+                  point(-14,1+frame.tail),point(-16,6+frame.tail),point(-11,3)};
+    Polygon(dc,tail,6);
+    const POINT top=point(0,-5),bottom=point(0,6);
+    Ellipse(dc,Px(app,static_cast<int>(std::lround(frame.x-11))),top.y,
+            Px(app,static_cast<int>(std::lround(frame.x+11))),bottom.y);
+    POINT fin[]={point(-3,-4),point(-5,-9),point(4,-4)}; Polygon(dc,fin,3);
+    POINT flipper[]={point(-1,2),point(-5,8),point(5,4)}; Polygon(dc,flipper,3);
+    SelectObject(dc,oldBrush); SelectObject(dc,oldPen); DeleteObject(brush);
+    const auto eye=point(7,-2);
+    Fill(dc,app,MulDiv(eye.x,96,app.scale),MulDiv(eye.y,96,app.scale),2,2,RGB(232,239,253),2);
+    HPEN pen=CreatePen(PS_SOLID,std::max(1,Px(app,1)),RGB(46,81,124));
+    oldPen=SelectObject(dc,pen);
+    MoveToEx(dc,Px(app,6),Px(app,31),nullptr);
+    for (int x=7;x<=66;++x)
+        LineTo(dc,Px(app,x),Px(app,31+static_cast<int>(std::lround(std::sin(x/6.0+elapsed/500.0)))));
+    SelectObject(dc,oldPen); DeleteObject(pen);
+    if (frame.splash>0) {
+        const int spread=static_cast<int>((1-frame.splash)*8),height=static_cast<int>(frame.splash*7);
+        for (int side:{-1,1}) Fill(dc,app,static_cast<int>(frame.splash_x)+side*(4+spread),30-height,2,3,RGB(141,190,255),2);
+    }
+}
 void Paint(App& app,HDC supplied=nullptr) {
     PAINTSTRUCT paint{}; HDC target=supplied?supplied:BeginPaint(app.hwnd,&paint);
     RECT rect{}; GetClientRect(app.hwnd,&rect);
@@ -140,7 +190,7 @@ void Paint(App& app,HDC supplied=nullptr) {
     if (app.config.display_mode=="panel") {
         if (app.icon) DrawIconEx(dc,Px(app,18),Px(app,14),app.icon,Px(app,24),Px(app,24),0,nullptr,DI_NORMAL);
         Text(dc,app,L"DeepSeek 余额",50,12,230,28,14,white,true);
-        Text(dc,app,IsPeakHour()?L"高峰时段":L"非高峰",204,15,72,22,9,blue,false,DT_RIGHT);
+        PeakLamp(dc,app,206,26,3,62,9);
         Text(dc,app,L"−",280,10,24,28,20,muted,false,DT_CENTER);
         Text(dc,app,L"×",308,10,24,28,20,muted,false,DT_CENTER);
         Text(dc,app,L"可用总额",20,50,180,20,11,muted);
@@ -154,13 +204,16 @@ void Paint(App& app,HDC supplied=nullptr) {
         Fill(dc,app,252,193,68,30,RGB(35,71,135),10);
         Text(dc,app,app.busy?L"刷新中":L"刷新",252,193,68,30,11,white,true,DT_CENTER);
     } else if (app.config.display_mode=="bubble") {
-        const int bob=static_cast<int>(std::sin(app.tick/8.0)*2);
-        if (app.icon) DrawIconEx(dc,Px(app,20),Px(app,9+bob),app.icon,Px(app,32),Px(app,32),0,nullptr,DI_NORMAL);
-        Text(dc,app,balance?Wide(AmountText(balance->total)):L"--",3,43,66,20,11,amountColor,true,DT_CENTER);
+        const int64_t elapsed=app.smokeElapsed>=0?app.smokeElapsed:
+            static_cast<int64_t>((GetTickCount64()-app.animationStarted)%16000);
+        PaintWhale(dc,app,elapsed);
+        Text(dc,app,balance?Wide(AmountText(balance->total)):L"--",3,44,66,17,10,amountColor,true,DT_CENTER);
+        PeakLamp(dc,app,22,64,2,27,7);
     } else {
         if (app.icon) DrawIconEx(dc,Px(app,11),Px(app,11),app.icon,Px(app,24),Px(app,24),0,nullptr,DI_NORMAL);
         Text(dc,app,total,44,3,130,25,15,amountColor,true);
-        Text(dc,app,app.busy?L"刷新中…":app.status,44,26,130,16,9,muted);
+        PeakLamp(dc,app,48,34,3,50,8);
+        Text(dc,app,app.busy?L"刷新中…":app.status,112,26,62,16,8,muted);
     }
     BitBlt(target,0,0,rect.right,rect.bottom,dc,0,0,SRCCOPY);
     SelectObject(dc,previous); DeleteObject(bitmap); DeleteDC(dc);
@@ -264,6 +317,11 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT message,WPARAM wparam,LPARAM lparam) 
     case WM_PAINT: Paint(*app); return 0;
     case WM_PRINTCLIENT: Paint(*app,reinterpret_cast<HDC>(wparam)); return 0;
     case WM_ERASEBKGND: return 1;
+    case SmokeFrame:
+        if (app->smoke && wparam<=1 && lparam>=0 && lparam<=60000) {
+            app->smokeElapsed=lparam; app->peak=wparam!=0; Redraw(*app); return 1;
+        }
+        return 0;
     case Done: FinishFetch(*app); return 0;
     case WM_CONTEXTMENU: { POINT point{}; GetCursorPos(&point); Menu(*app,point.x,point.y); return 0; }
     case WM_LBUTTONDBLCLK: if (app->config.display_mode!="panel") Mode(*app,"panel"); return 0;
@@ -297,11 +355,17 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT message,WPARAM wparam,LPARAM lparam) 
     case WM_TIMER:
         if (wparam==1) StartFetch(*app,app->candidate);
         else if (wparam==2) {
-            ++app->tick;
             if (app->config.display_mode=="bubble") Redraw(*app);
-            if (app->tick%20==0 && app->config.display_mode=="taskbar" && !app->dragging) Position(*app);
         } else if (wparam==3) { KillTimer(hwnd,3); DestroyWindow(hwnd); }
+        else if (wparam==4) {
+            UpdatePeak(*app);
+            const ULONGLONG now=GetTickCount64();
+            if (app->config.display_mode=="taskbar" && !app->dragging && now-app->lastAnchor>=2000) {
+                Position(*app); app->lastAnchor=now;
+            }
+        }
         return 0;
+    case WM_TIMECHANGE: UpdatePeak(*app); return 0;
     case WM_DISPLAYCHANGE: Position(*app); return 0;
     case WM_DPICHANGED: app->scale=HIWORD(wparam); Position(*app); return 0;
     case WM_CLOSE: RequestClose(*app); return 0;
@@ -341,7 +405,9 @@ int RunApp(HINSTANCE instance,const std::wstring& options) {
     HWND hwnd=CreateWindowExW(WS_EX_TOOLWINDOW|WS_EX_LAYERED,ClassName,L"DeepSeek Balance Monitor",WS_POPUP,0,0,1,1,nullptr,nullptr,instance,&app);
     if (!hwnd) return 1;
     SetLayeredWindowAttributes(hwnd,0,static_cast<BYTE>(std::max(0.3,std::min(1.0,app.config.opacity))*255),LWA_ALPHA);
-    Position(app,true); ShowWindow(hwnd,SW_SHOWNOACTIVATE); UpdateWindow(hwnd); SetTimer(hwnd,2,100,nullptr);
+    app.animationStarted=app.lastAnchor=GetTickCount64(); app.peak=IsPeakHour();
+    Position(app,true); ShowWindow(hwnd,SW_SHOWNOACTIVATE); UpdateWindow(hwnd);
+    AnimationTimer(app); SetTimer(hwnd,4,1000,nullptr);
     if (app.smoke) SetTimer(hwnd,3,app.smokeMs,nullptr);
     else { SetTimer(hwnd,1,static_cast<UINT>(app.config.refresh_interval)*1000,nullptr); StartFetch(app); }
     MSG message{};

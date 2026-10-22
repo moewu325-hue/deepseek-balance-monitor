@@ -6,7 +6,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR command, int) {
     const std::wstring options = command ? command : L"";
     if (options == L"--version") {
         AttachConsole(ATTACH_PARENT_PROCESS);
-        std::puts("DeepSeek Balance Monitor native 2.0.0");
+        std::puts("DeepSeek Balance Monitor native 2.1.0");
         return 0;
     }
     if (options == L"--check") {

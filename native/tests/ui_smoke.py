@@ -37,6 +37,8 @@ def run(executable):
     user.GetDC.restype = wintypes.HDC
     user.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
     user.PrintWindow.argtypes = [wintypes.HWND, wintypes.HDC, wintypes.UINT]
+    user.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user.SendMessageW.restype = ctypes.c_ssize_t
     gdi = ctypes.WinDLL("gdi32", use_last_error=True)
     gdi.CreateCompatibleDC.argtypes = [wintypes.HDC]
     gdi.CreateCompatibleDC.restype = wintypes.HDC
@@ -102,6 +104,32 @@ def run(executable):
             assert printed, f"{mode}: PrintWindow failed ({detail})"
             assert len(colors) > 2, f"{mode}: blank render ({detail})"
             assert 0x002A170F in colors, f"{mode}: missing navy background ({detail})"
+            logical_width = {"panel": 340, "bubble": 72, "taskbar": 184}[mode]
+            scale = width / logical_width
+            def pixel(x, y):
+                return gdi.GetPixel(memory, round(x * scale), round(y * scale))
+            def sample(peak, elapsed):
+                assert user.SendMessageW(hwnd, 0x8002, peak, elapsed) == 1, f"{mode}: smoke control rejected"
+                assert user.PrintWindow(hwnd, memory, 2), f"{mode}: sample render failed"
+                return tuple(pixel(x, y) for y in range(7, 43) for x in range(7, 66)) if mode == "bubble" else ()
+            lamp = {"panel": (206, 26), "bubble": (22, 64), "taskbar": (48, 34)}[mode]
+            sample(1, 0)
+            assert pixel(*lamp) == 0x007165F8, f"{mode}: peak red lamp missing"
+            sample(0, 0)
+            assert pixel(*lamp) == 0x0098D64C, f"{mode}: off-peak green lamp missing"
+            for peak, elapsed in ((2, 0), (0, -1), (0, 60001)):
+                assert user.SendMessageW(hwnd, 0x8002, peak, elapsed) == 0, f"{mode}: invalid smoke control accepted"
+            assert user.PrintWindow(hwnd, memory, 2)
+            assert pixel(*lamp) == 0x0098D64C, f"{mode}: invalid control changed peak state"
+            if mode == "bubble":
+                amount = tuple(pixel(x, y) for y in range(45, 60) for x in range(8, 65))
+                frames = [sample(0, elapsed) for elapsed in (0, 2000, 6000, 12000, 12750, 13500)]
+                assert len(set(frames)) == 6, "bubble: swim/jump samples must differ"
+                assert tuple(pixel(x, y) for y in range(45, 60) for x in range(8, 65)) == amount, "bubble: animation covered the amount"
+                assert frames[0] == sample(0, 16000), "bubble: timeline must repeat"
+                after = wintypes.RECT()
+                user.GetWindowRect(hwnd, ctypes.byref(after))
+                assert (after.left, after.top) == (rect.left, rect.top), "bubble: animation moved the window"
         finally:
             gdi.SelectObject(memory, previous)
             gdi.DeleteObject(bitmap)

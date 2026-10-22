@@ -1,5 +1,8 @@
 #include "../core.hpp"
+#include "../animation.hpp"
+#include <cmath>
 #include <cstdio>
+#include <limits>
 #include <string>
 static int failures = 0, checks = 0;
 #define CHECK(x) do { ++checks; if (!(x)) { ++failures; std::printf("FAIL line %d: %s\n", __LINE__, #x); } } while (0)
@@ -51,6 +54,36 @@ int main() {
     CHECK(!ParseHistory(R"({"schema_version":2,"baselines":{},"records":[{"time":"bad","currency":"CNY","total_balance":"1"}]})", copy));
     CHECK(!ParseHistory(R"({"schema_version":2,"baselines":{},"records":[{"time":"2026-10-21T12:00:00---","currency":"CNY","total_balance":"1"}]})", copy));
     CHECK(Wide(Utf8(L"中文 ¥")) == L"中文 ¥");
+    const auto start = WhaleAt(0), right = WhaleAt(2000), turn = WhaleAt(4000), left = WhaleAt(6000);
+    CHECK(start.x == 24 && start.facing_right);
+    CHECK(right.x > start.x && right.facing_right);
+    CHECK(turn.x == 48 && !turn.facing_right);
+    CHECK(left.x < turn.x && !left.facing_right);
+    CHECK(WhaleAt(8000).x == start.x && WhaleAt(8000).facing_right);
+    CHECK(WhaleAt(100).tail != WhaleAt(500).tail);
+    CHECK(!WhaleAt(11999).jumping);
+    CHECK(WhaleAt(12000).jumping && WhaleAt(12000).splash > 0);
+    CHECK(WhaleAt(12375).y < WhaleAt(12000).y);
+    CHECK(WhaleAt(12750).y == 17);
+    CHECK(WhaleAt(13125).y > WhaleAt(12750).y);
+    CHECK(!WhaleAt(13500).jumping && WhaleAt(13500).splash > 0);
+    CHECK(WhaleAt(13800).splash == 0);
+    CHECK(WhaleAt(16000).x == start.x && WhaleAt(16000).y == start.y);
+    CHECK(WhaleAt(-1).x == start.x && WhaleAt(-1).y == start.y);
+    const auto huge = WhaleAt(std::numeric_limits<int64_t>::max());
+    CHECK(std::isfinite(huge.x) && std::isfinite(huge.y) && huge.x >= 24 && huge.x <= 48);
+    bool bounded = true;
+    for (int64_t elapsed = 0; elapsed <= 32000; elapsed += 7) {
+        const auto frame = WhaleAt(elapsed);
+        bounded = bounded && frame.x >= 24 && frame.x <= 48 && frame.y >= 17 && frame.y < 35;
+    }
+    CHECK(bounded);
+    CHECK(WhaleAt(12375).x == WhaleAt(12375 + 16000).x);
+    CHECK(WhaleAt(12375).y == WhaleAt(12375 + 16000).y);
+    CHECK(PeakIndicator(true).color == 0x007165F8);
+    CHECK(PeakIndicator(false).color == 0x0098D64C);
+    CHECK(std::wstring(PeakIndicator(true).label) == L"高峰");
+    CHECK(std::wstring(PeakIndicator(false).label) == L"非高峰");
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }
