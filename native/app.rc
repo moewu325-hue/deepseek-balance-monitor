@@ -1,8 +1,8 @@
 1 ICON "../assets/deepseek_icon.ico"
 1 24 "app.manifest"
 1 VERSIONINFO
-FILEVERSION 2,1,0,0
-PRODUCTVERSION 2,1,0,0
+FILEVERSION 2,1,1,0
+PRODUCTVERSION 2,1,1,0
 FILEOS 0x40004
 FILETYPE 1
 BEGIN
@@ -12,8 +12,8 @@ BEGIN
   BEGIN
    VALUE "FileDescription", "DeepSeek Balance Monitor (Native)\0"
    VALUE "ProductName", "DeepSeek Balance Monitor\0"
-   VALUE "FileVersion", "2.1.0\0"
-   VALUE "ProductVersion", "2.1.0\0"
+   VALUE "FileVersion", "2.1.1\0"
+   VALUE "ProductVersion", "2.1.1\0"
   END
  END
  BLOCK "VarFileInfo"

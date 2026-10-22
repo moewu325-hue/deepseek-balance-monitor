@@ -122,8 +122,11 @@ def run(executable):
             assert user.PrintWindow(hwnd, memory, 2)
             assert pixel(*lamp) == 0x0098D64C, f"{mode}: invalid control changed peak state"
             if mode == "bubble":
+                sample(0, 4000)
+                icon_pixels = sum(pixel(x, y) == 0x00FE6B4D for y in range(7, 43) for x in range(7, 66))
+                assert icon_pixels >= 20, "bubble: original DeepSeek icon pixels missing"
                 amount = tuple(pixel(x, y) for y in range(45, 60) for x in range(8, 65))
-                frames = [sample(0, elapsed) for elapsed in (0, 2000, 6000, 12000, 12750, 13500)]
+                frames = [sample(0, elapsed) for elapsed in (0, 2000, 6000, 12000, 12800, 13600)]
                 assert len(set(frames)) == 6, "bubble: swim/jump samples must differ"
                 assert tuple(pixel(x, y) for y in range(45, 60) for x in range(8, 65)) == amount, "bubble: animation covered the amount"
                 assert frames[0] == sample(0, 16000), "bubble: timeline must repeat"

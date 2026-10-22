@@ -57,33 +57,61 @@ int main() {
     const auto start = WhaleAt(0), right = WhaleAt(2000), turn = WhaleAt(4000), left = WhaleAt(6000);
     CHECK(start.x == 24 && start.facing_right);
     CHECK(right.x > start.x && right.facing_right);
-    CHECK(turn.x == 48 && !turn.facing_right);
+    CHECK(turn.x > 47 && !turn.facing_right);
     CHECK(left.x < turn.x && !left.facing_right);
-    CHECK(WhaleAt(8000).x == start.x && WhaleAt(8000).facing_right);
-    CHECK(WhaleAt(100).tail != WhaleAt(500).tail);
+    CHECK(WhaleAt(8000).x > start.x && WhaleAt(8000).facing_right);
+    CHECK(WhaleAt(100).rotation != WhaleAt(500).rotation);
     CHECK(!WhaleAt(11999).jumping);
     CHECK(WhaleAt(12000).jumping && WhaleAt(12000).splash > 0);
-    CHECK(WhaleAt(12375).y < WhaleAt(12000).y);
-    CHECK(WhaleAt(12750).y == 17);
-    CHECK(WhaleAt(13125).y > WhaleAt(12750).y);
-    CHECK(!WhaleAt(13500).jumping && WhaleAt(13500).splash > 0);
-    CHECK(WhaleAt(13800).splash == 0);
+    CHECK(WhaleAt(12400).y < WhaleAt(12000).y);
+    CHECK(WhaleAt(12800).y == 20);
+    CHECK(WhaleAt(13200).y > WhaleAt(12800).y);
+    CHECK(!WhaleAt(13600).jumping && WhaleAt(13600).splash > 0);
+    CHECK(WhaleAt(13900).splash == 0);
     CHECK(WhaleAt(16000).x == start.x && WhaleAt(16000).y == start.y);
     CHECK(WhaleAt(-1).x == start.x && WhaleAt(-1).y == start.y);
     const auto huge = WhaleAt(std::numeric_limits<int64_t>::max());
-    CHECK(std::isfinite(huge.x) && std::isfinite(huge.y) && huge.x >= 24 && huge.x <= 48);
+    CHECK(std::isfinite(huge.x) && std::isfinite(huge.y) && huge.x >= 18 && huge.x <= 48);
     bool bounded = true;
     for (int64_t elapsed = 0; elapsed <= 32000; elapsed += 7) {
         const auto frame = WhaleAt(elapsed);
-        bounded = bounded && frame.x >= 24 && frame.x <= 48 && frame.y >= 17 && frame.y < 35;
+        bounded = bounded && frame.x >= 18 && frame.x <= 48 && frame.y >= 20 && frame.y < 39
+            && std::isfinite(frame.rotation) && std::abs(frame.rotation) <= 1.5708;
     }
     CHECK(bounded);
-    CHECK(WhaleAt(12375).x == WhaleAt(12375 + 16000).x);
-    CHECK(WhaleAt(12375).y == WhaleAt(12375 + 16000).y);
+    CHECK(WhaleAt(12400).x == WhaleAt(12400 + 16000).x);
+    CHECK(WhaleAt(12400).y == WhaleAt(12400 + 16000).y);
+    CHECK(WhaleAt(12000).rotation > 0.5);
+    CHECK(std::abs(WhaleAt(12800).rotation) < 0.001);
+    CHECK(WhaleAt(13599).rotation < -0.5);
+    for (int64_t elapsed : {12000, 12200, 12800, 13400, 13599}) {
+        const auto frame = WhaleAt(elapsed);
+        const double direction = frame.facing_right ? 1 : -1;
+        const double speed = std::hypot(frame.vx, frame.vy);
+        CHECK(std::abs(direction * std::cos(frame.rotation) - frame.vx / speed) < 0.001);
+        CHECK(std::abs(direction * std::sin(frame.rotation) - frame.vy / speed) < 0.001);
+        CHECK(frame.vx == -15);
+    }
+    for (int64_t boundary : {12000, 13600}) {
+        const auto before = WhaleAt(boundary - 1), at = WhaleAt(boundary);
+        CHECK(std::abs(before.x - at.x) < 0.05 && std::abs(before.y - at.y) < 0.05);
+        CHECK(std::abs(before.vx - at.vx) < 0.1 && std::abs(before.vy - at.vy) < 0.2);
+        CHECK(std::abs(before.rotation - at.rotation) < 0.02);
+    }
     CHECK(PeakIndicator(true).color == 0x007165F8);
     CHECK(PeakIndicator(false).color == 0x0098D64C);
     CHECK(std::wstring(PeakIndicator(true).label) == L"高峰");
     CHECK(std::wstring(PeakIndicator(false).label) == L"非高峰");
+    // 弧线跳跃必须持续前进，不得只沿竖直方向起落。
+    CHECK(std::abs(WhaleAt(12000).x - 44) < 0.001);
+    CHECK(std::abs(WhaleAt(12800).x - 32) < 0.001);
+    CHECK(std::abs(WhaleAt(12800).y - 20) < 0.001);
+    CHECK(std::abs(WhaleAt(13600).x - 20) < 0.001);
+    CHECK(std::abs(WhaleAt(13600).y - 34) < 0.001);
+    const double gravity = (WhaleAt(12900).y - 2*WhaleAt(12800).y + WhaleAt(12700).y)/0.01;
+    CHECK(std::abs(gravity - 43.75) < 0.001);
+    CHECK(std::abs(WhaleAt(11201).rotation - WhaleAt(11199).rotation) < 0.1);
+    CHECK(std::abs(WhaleAt(14401).rotation - WhaleAt(14399).rotation) < 0.1);
     std::printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

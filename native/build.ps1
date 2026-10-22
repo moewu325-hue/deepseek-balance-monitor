@@ -5,7 +5,7 @@ $projectRoot = Split-Path $PSScriptRoot -Parent
 $buildRoot = Join-Path $projectRoot 'build\native'
 New-Item -ItemType Directory -Path $buildRoot -Force | Out-Null
 $flags = @('-std=c++17','-target','x86_64-windows-gnu','-Oz','-s','-static','-fno-exceptions','-fno-rtti','-DJSON_NOEXCEPTION','-DUNICODE','-D_UNICODE','-Wall','-Wextra')
-$libraries = @('-lwinhttp','-ladvapi32','-lshell32','-lole32','-luser32','-lgdi32')
+$libraries = @('-lwinhttp','-ladvapi32','-lshell32','-lole32','-luser32','-lgdi32','-lmsimg32')
 Push-Location $PSScriptRoot
 try {
     & $Zig rc '/fo' "$buildRoot\app.res" 'app.rc'

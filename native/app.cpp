@@ -1,5 +1,6 @@
 #include "windows.hpp"
 #include "animation.hpp"
+#include "icon_sprite.hpp"
 #include <shellapi.h>
 #include <algorithm>
 #include <cmath>
@@ -16,6 +17,7 @@ struct App {
     HINSTANCE instance=nullptr;
     HWND hwnd=nullptr, dialog=nullptr, edit=nullptr, remember=nullptr;
     HICON icon=nullptr;
+    IconSprite whale;
     HANDLE worker=nullptr;
     Config config;
     History history;
@@ -142,29 +144,17 @@ void PeakLamp(HDC dc,const App& app,int x,int y,int radius,int textWidth,int siz
     Fill(dc,app,x-radius,y-radius,radius*2+1,radius*2+1,indicator.color,radius*2+1);
     Text(dc,app,indicator.label,x+radius+5,y-8,textWidth,16,size,indicator.color);
 }
-void PaintWhale(HDC dc,const App& app,int64_t elapsed) {
+void PaintWhale(HDC dc,App& app,int64_t elapsed) {
     elapsed=std::max<int64_t>(0,elapsed)%16000;
     const auto frame=WhaleAt(elapsed);
     Fill(dc,app,6,31,60,12,RGB(20,39,66));
-    HBRUSH brush=CreateSolidBrush(RGB(91,149,255));
-    auto oldBrush=SelectObject(dc,brush), oldPen=SelectObject(dc,GetStockObject(NULL_PEN));
-    auto point=[&](double x,double y) {
-        return POINT{Px(app,static_cast<int>(std::lround(frame.x+(frame.facing_right?x:-x)))),
-                     Px(app,static_cast<int>(std::lround(frame.y+y)))};
-    };
-    POINT tail[]={point(-10,0),point(-15,-2+frame.tail),point(-16,-6+frame.tail),
-                  point(-14,1+frame.tail),point(-16,6+frame.tail),point(-11,3)};
-    Polygon(dc,tail,6);
-    const POINT top=point(0,-5),bottom=point(0,6);
-    Ellipse(dc,Px(app,static_cast<int>(std::lround(frame.x-11))),top.y,
-            Px(app,static_cast<int>(std::lround(frame.x+11))),bottom.y);
-    POINT fin[]={point(-3,-4),point(-5,-9),point(4,-4)}; Polygon(dc,fin,3);
-    POINT flipper[]={point(-1,2),point(-5,8),point(5,4)}; Polygon(dc,flipper,3);
-    SelectObject(dc,oldBrush); SelectObject(dc,oldPen); DeleteObject(brush);
-    const auto eye=point(7,-2);
-    Fill(dc,app,MulDiv(eye.x,96,app.scale),MulDiv(eye.y,96,app.scale),2,2,RGB(232,239,253),2);
+    const int saved=SaveDC(dc);
+    IntersectClipRect(dc,Px(app,6),Px(app,7),Px(app,66),Px(app,43));
+    app.whale.Draw(dc,static_cast<int>(std::lround(frame.x*app.scale/96)),
+        static_cast<int>(std::lround(frame.y*app.scale/96)),app.scale,frame.rotation,frame.facing_right);
+    RestoreDC(dc,saved);
     HPEN pen=CreatePen(PS_SOLID,std::max(1,Px(app,1)),RGB(46,81,124));
-    oldPen=SelectObject(dc,pen);
+    auto oldPen=SelectObject(dc,pen);
     MoveToEx(dc,Px(app,6),Px(app,31),nullptr);
     for (int x=7;x<=66;++x)
         LineTo(dc,Px(app,x),Px(app,31+static_cast<int>(std::lround(std::sin(x/6.0+elapsed/500.0)))));
@@ -398,6 +388,10 @@ int RunApp(HINSTANCE instance,const std::wstring& options) {
     }
     HDC screen=GetDC(nullptr); app.scale=GetDeviceCaps(screen,LOGPIXELSX); ReleaseDC(nullptr,screen);
     app.icon=LoadIconW(instance,MAKEINTRESOURCEW(1));
+    HICON source=static_cast<HICON>(LoadImageW(instance,MAKEINTRESOURCEW(1),IMAGE_ICON,225,225,0));
+    const bool iconLoaded=app.whale.Load(source);
+    if (source) DestroyIcon(source);
+    if (!iconLoaded) return 1;
     WNDCLASSW cls{}; cls.style=CS_DBLCLKS; cls.lpfnWndProc=WindowProc; cls.hInstance=instance;
     cls.hCursor=LoadCursorW(nullptr,IDC_ARROW); cls.hIcon=app.icon; cls.lpszClassName=ClassName;
     if (!RegisterClassW(&cls)) return 1;
