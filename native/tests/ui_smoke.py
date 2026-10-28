@@ -50,6 +50,11 @@ def run(executable):
     gdi.GetPixel.restype = wintypes.DWORD
     gdi.DeleteObject.argtypes = [wintypes.HANDLE]
     gdi.DeleteDC.argtypes = [wintypes.HDC]
+    gdi.CreateRectRgn.argtypes = [ctypes.c_int] * 4
+    gdi.CreateRectRgn.restype = wintypes.HRGN
+    gdi.PtInRegion.argtypes = [wintypes.HRGN, ctypes.c_int, ctypes.c_int]
+    user.GetWindowRgn.argtypes = [wintypes.HWND, wintypes.HRGN]
+    system_scale = None
     for mode in ("panel", "bubble", "taskbar"):
         proc = subprocess.Popen([str(exe), f"--smoke-test={mode}", "--smoke-ms=2000"])
         found = []
@@ -75,8 +80,10 @@ def run(executable):
         assert width > 0 and height > 0, f"{mode}: empty window"
         if mode == "panel":
             assert width > height, f"{mode}: bad panel geometry"
+            system_scale = width / 340
         elif mode == "bubble":
             assert abs(width - height) <= 2, f"{mode}: bubble must be square"
+            assert abs(width - round(108 * system_scale)) <= 1, f"{mode}: expected enlarged 108-DIP diameter, got {width}px"
         else:
             assert width >= height * 3, f"{mode}: bad taskbar geometry"
         screen = user.GetDC(hwnd)
@@ -123,6 +130,16 @@ def run(executable):
             assert pixel(*lamp) == 0x0098D64C, f"{mode}: invalid control changed peak state"
             if mode == "bubble":
                 sample(0, 4000)
+                region = gdi.CreateRectRgn(0, 0, 0, 0)
+                try:
+                    assert user.GetWindowRgn(hwnd, region), "bubble: missing circular window region"
+                    assert not gdi.PtInRegion(region, 0, 0), "bubble: square corner exposed"
+                    assert gdi.PtInRegion(region, width // 2, height // 2), "bubble: center clipped"
+                finally:
+                    gdi.DeleteObject(region)
+                assert pixel(54, 13) == 0x00DBEFE1, "bubble: moon missing"
+                assert pixel(12, 27) == 0x00442F14, "bubble: distant mountains missing"
+                assert len({pixel(36, y) for y in (5, 10, 20, 25)}) >= 3, "bubble: sky depth missing"
                 icon_pixels = sum(pixel(x, y) == 0x00FE6B4D for y in range(7, 43) for x in range(7, 66))
                 assert icon_pixels >= 20, "bubble: original DeepSeek icon pixels missing"
                 amount = tuple(pixel(x, y) for y in range(45, 60) for x in range(8, 65))
@@ -133,6 +150,17 @@ def run(executable):
                 after = wintypes.RECT()
                 user.GetWindowRect(hwnd, ctypes.byref(after))
                 assert (after.left, after.top) == (rect.left, rect.top), "bubble: animation moved the window"
+                for command, diameter in enumerate((72, 90, 108, 132, 160), 120):
+                    user.SendMessageW(hwnd, 0x0111, command, 0)
+                    user.GetWindowRect(hwnd, ctypes.byref(after))
+                    actual = after.right - after.left
+                    assert abs(actual - round(diameter * system_scale)) <= 1, f"bubble: size setting {diameter} failed, got {actual}px"
+                    assert actual == after.bottom - after.top, "bubble: resized view is not square"
+                user.SendMessageW(hwnd, 0x0111, 122, 0)
+                for command, source in ((119, 0), (125, 0), (120 | (1 << 16), 0), (120, 1)):
+                    user.SendMessageW(hwnd, 0x0111, command, source)
+                    user.GetWindowRect(hwnd, ctypes.byref(after))
+                    assert after.right - after.left == width, "bubble: invalid size command changed geometry"
         finally:
             gdi.SelectObject(memory, previous)
             gdi.DeleteObject(bitmap)

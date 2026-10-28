@@ -6,9 +6,9 @@
 
 Keep your DeepSeek API balance on the Windows desktop. Choose a detailed panel, a whale bubble, or a compact taskbar strip, with background balance refresh every 60 seconds.
 
-Built with **C++17 / Win32 / GDI / WinHTTP**, the single EXE requires no Python or additional runtime installation. v2.1.1 swims the bundled DeepSeek whale icon back and forth, follows a parabolic jump with its nose aligned to the flight direction, and retains red/green peak-period indicators in all three views.
+Built with **C++17 / Win32 / GDI / WinHTTP**, the single EXE requires no Python or additional runtime installation. v2.2.0 enlarges the bubble diameter by 50% and adds a moonlit bay, distant hills, layered water and ripples. The bundled DeepSeek icon swims and jumps along a parabolic arc, with red/green peak-period indicators in all three views.
 
-**v2.1.1 measures 506,880 bytes (495 KiB)**, about 98.7% smaller than the previous packaged app. This recording uses the actual native window with synthetic offline balance data:
+**v2.2.0 measures 512,000 bytes (500 KiB)**, about 98.7% smaller than the previous packaged app. This recording uses the actual native window with synthetic offline balance data:
 
 ![Whale swimming and jumping; the green light means off-peak](docs/whale-swim.gif)
 
@@ -19,10 +19,12 @@ Built with **C++17 / Win32 / GDI / WinHTTP**, the single EXE requires no Python 
 | View | What it provides |
 | --- | --- |
 | Panel | Total, granted and topped-up balance, estimated daily decrease, refresh status |
-| Whale bubble | DeepSeek icon swimming and jumping along an arc, nose up on ascent and down on descent; drag to move, double-click to expand |
+| Whale bubble | 108-DIP diameter, moonlit ocean scenery and the DeepSeek icon swimming and jumping along an arc; drag to move, double-click to expand |
 | Taskbar strip | Compact horizontal balance; docks above CodexUsageBar when found |
 
 Every view shows a red light for the legacy peak period or a green light for off-peak, accompanied by text. Animation stays inside the bubble and leaves the amount and indicator readable. Right-click for refresh, display mode, masked API key input and opt-in autostart.
+
+The right-click bubble-size submenu offers five presets (72, 90, 108, 132 and 160 DIPs), applied immediately and saved for the next launch. The default is 108 DIPs; Windows display scaling applies as usual.
 
 Failed requests retain the last successful balance and show a failure status. Fixed-point integers preserve six decimal places internally; currencies are recorded separately and never summed.
 
@@ -72,6 +74,7 @@ native/
   app.cpp           Views, animation and background refresh
   animation.hpp     Swimming, ballistic jump and peak indicator state
   icon_sprite.hpp   Cached transparent rotation and mirroring of the icon
+  ocean_scene.hpp   Moonlit bay, distant hills, ripples and underwater bubbles
   main.cpp          CLI and single instance
   tests/            Core, Windows and real-window checks
   third_party/      Pinned JSON header and license
@@ -81,7 +84,7 @@ docs/               Design and verification records
 
 ## Validation and support
 
-The [original verification record](docs/native-verification.md) documents v2.0.0 size, core/Windows assertions, real-window and live API checks. The [animation record](docs/whale-animation-verification.md) covers v2.1.1 icon rendering, trajectory, indicator colors and artifacts, with v2.1.0 results retained as history. GitHub Actions builds and checks the native release; the legacy Python workflow is manual, with pre-existing differences documented.
+The [original verification record](docs/native-verification.md) documents v2.0.0 size, core/Windows assertions, real-window and live API checks. The [animation record](docs/whale-animation-verification.md) covers the current ocean bubble, icon rendering, trajectory, indicator colors and artifacts, with earlier results retained as history. GitHub Actions builds and checks the native release; the legacy Python workflow is manual, with pre-existing differences documented.
 
 For a missing balance, inspect refresh status, network and credentials, or run `--check`. An issue should include Windows version, display mode and error state, with no key. Replacing the EXE leaves user data separate from program resources.
 

@@ -125,6 +125,7 @@ bool ParseConfig(const std::string& text, Config& output) {
     Json value; if (!ParseJson(text, value, 65536)) return false;
     Config config;
     if (!IntOption(value,"refresh_interval",10,86400,config.refresh_interval) ||
+        !IntOption(value,"bubble_size",72,160,config.bubble_size) ||
         !IntOption(value,"window_x",-100000,100000,config.window_x,true) || !IntOption(value,"window_y",-100000,100000,config.window_y,true) ||
         !BoolOption(value,"collapsed",config.collapsed) || !BoolOption(value,"auto_start",config.auto_start)) return false;
     auto opacity = value.find("opacity");
@@ -139,7 +140,7 @@ bool ParseConfig(const std::string& text, Config& output) {
 }
 std::string SerializeConfig(const Config& config) {
     Json value = {{"refresh_interval",config.refresh_interval},{"opacity",config.opacity},{"low_balance_warning",config.low_balance_warning},{"currency",config.currency},
-        {"collapsed",config.display_mode == "bubble"},{"auto_start",config.auto_start},{"display_mode",config.display_mode}};
+        {"collapsed",config.display_mode == "bubble"},{"auto_start",config.auto_start},{"display_mode",config.display_mode},{"bubble_size",config.bubble_size}};
     value["window_x"] = config.window_x == -100001 ? Json(nullptr) : Json(config.window_x);
     value["window_y"] = config.window_y == -100001 ? Json(nullptr) : Json(config.window_y);
     value["snap_edge"] = config.snap_edge.empty() ? Json(nullptr) : Json(config.snap_edge);

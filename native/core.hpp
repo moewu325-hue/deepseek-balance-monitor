@@ -13,6 +13,7 @@ struct Balance {
 struct Snapshot { bool available = false; std::vector<Balance> balances; };
 struct Config {
     int refresh_interval = 60;
+    int bubble_size = 108;
     int window_x = -100001, window_y = -100001;
     double opacity = 0.9;
     std::string low_balance_warning = "10.00", currency = "CNY", snap_edge;

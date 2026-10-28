@@ -38,6 +38,17 @@ int main() {
     CHECK(!ParseConfig(R"({"window_x":100001})", config));
     CHECK(ParseConfig(R"({"collapsed":true})", config) && config.display_mode == "bubble");
     CHECK(!ParseConfig(std::string(40, '[') + std::string(40, ']'), config));
+    CHECK(ParseConfig("{}", config) && SerializeConfig(config).find("\"bubble_size\": 108") != std::string::npos);
+    CHECK(ParseConfig(R"({"bubble_size":132})", config) && SerializeConfig(config).find("\"bubble_size\": 132") != std::string::npos);
+    CHECK(!ParseConfig(R"({"bubble_size":71})", config));
+    CHECK(!ParseConfig(R"({"bubble_size":161})", config));
+    CHECK(!ParseConfig(R"({"bubble_size":90.5})", config));
+    CHECK(!ParseConfig(R"({"bubble_size":true})", config));
+    CHECK(!ParseConfig(R"({"bubble_size":999999999999999999})", config));
+    CHECK(ParseConfig(R"({"bubble_size":72})", config) && config.bubble_size == 72);
+    CHECK(ParseConfig(R"({"bubble_size":160})", config) && config.bubble_size == 160);
+    Config resized;
+    CHECK(ParseConfig(SerializeConfig(config), resized) && resized.bubble_size == 160);
     History history;
     CHECK(ParseHistory(R"({"schema_version":2,"baselines":{"CNY":{"date":"2026-10-21","total_balance":"10.00"}},"records":[]})", history));
     CHECK(RecordBalance(history, {"CNY",9000000,0,9000000}, "2026-10-21T12:00:00+08:00") == 1000000);

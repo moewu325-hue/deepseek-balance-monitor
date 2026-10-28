@@ -31,8 +31,8 @@ int wmain(int argc,wchar_t** argv) {
     CHECK(ReadText(path,content) && content=="before");
     CHECK(AtomicWrite(path,"recovered")); CHECK(ReadText(path,content) && content=="recovered");
     CHECK(AtomicWrite(path,"\xef\xbb\xbf" "UTF8")); CHECK(ReadText(path,content) && content=="UTF8");
-    Config config; CHECK(LoadConfig(root,config)); config.display_mode="taskbar";
-    CHECK(SaveConfig(root,config)); Config copy; CHECK(LoadConfig(root,copy) && copy.display_mode=="taskbar");
+    Config config; CHECK(LoadConfig(root,config)); config.display_mode="taskbar"; config.bubble_size=160;
+    CHECK(SaveConfig(root,config)); Config copy; CHECK(LoadConfig(root,copy) && copy.display_mode=="taskbar" && copy.bubble_size==160);
     CHECK(AtomicWrite(root+L"\\config.json","{")); CHECK(!LoadConfig(root,copy));
     WIN32_FIND_DATAW entry{}; HANDLE search=FindFirstFileW((root+L"\\*").c_str(),&entry);
     if (search!=INVALID_HANDLE_VALUE) { do { if (!(entry.dwFileAttributes&FILE_ATTRIBUTE_DIRECTORY)) DeleteFileW((root+L"\\"+entry.cFileName).c_str()); } while (FindNextFileW(search,&entry)); FindClose(search); }

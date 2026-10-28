@@ -1,6 +1,7 @@
 #include "windows.hpp"
 #include "animation.hpp"
 #include "icon_sprite.hpp"
+#include "ocean_scene.hpp"
 #include <shellapi.h>
 #include <algorithm>
 #include <cmath>
@@ -11,6 +12,9 @@ namespace {
 constexpr UINT Done = WM_APP + 1;
 constexpr UINT SmokeFrame = WM_APP + 2;
 constexpr int Refresh=101, Panel=102, Bubble=103, Taskbar=104, Console=105, Key=106, Startup=107, Exit=108;
+constexpr int SizeFirst=120;
+constexpr int BubbleSizes[]={72,90,108,132,160};
+const wchar_t* SizeLabels[]={L"小",L"标准",L"大",L"超大",L"特大"};
 const wchar_t* ClassName=L"DeepSeekNativeMonitor";
 const wchar_t* KeyClass=L"DeepSeekNativeKey";
 struct App {
@@ -36,6 +40,8 @@ struct App {
     int64_t decrease=0;
 };
 int Px(const App& app,int value) { return MulDiv(value,app.scale,96); }
+int DrawScale(const App& app) { return app.config.display_mode=="bubble"?MulDiv(app.scale,app.config.bubble_size,72):app.scale; }
+int DrawPx(const App& app,int value) { return MulDiv(value,DrawScale(app),96); }
 void Redraw(App& app) { InvalidateRect(app.hwnd,nullptr,FALSE); }
 void AnimationTimer(App& app) {
     KillTimer(app.hwnd,2);
@@ -52,7 +58,7 @@ void SaveSettings(App& app) {
 }
 void Position(App& app,bool restore=false) {
     const bool panel=app.config.display_mode=="panel", bubble=app.config.display_mode=="bubble";
-    const int width=Px(app,panel?340:bubble?72:184), height=Px(app,panel?238:bubble?72:46);
+    const int width=Px(app,panel?340:bubble?app.config.bubble_size:184), height=Px(app,panel?238:bubble?app.config.bubble_size:46);
     RECT work{}, current{};
     SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
     GetWindowRect(app.hwnd,&current);
@@ -68,13 +74,19 @@ void Position(App& app,bool restore=false) {
     x=std::max(static_cast<int>(work.left),std::min(x,static_cast<int>(work.right)-width));
     y=std::max(static_cast<int>(work.top),std::min(y,static_cast<int>(work.bottom)-height));
     SetWindowPos(app.hwnd,nullptr,x,y,width,height,SWP_NOZORDER|SWP_NOACTIVATE);
-    HRGN region=CreateRoundRectRgn(0,0,width+1,height+1,Px(app,bubble?72:18),Px(app,bubble?72:18));
+    HRGN region=CreateRoundRectRgn(0,0,width+1,height+1,Px(app,bubble?app.config.bubble_size:18),Px(app,bubble?app.config.bubble_size:18));
     if (!SetWindowRgn(app.hwnd,region,TRUE)) DeleteObject(region);
 }
 void Mode(App& app,const char* mode) {
     app.config.display_mode=mode;
     app.config.collapsed=app.config.display_mode=="bubble";
     Position(app); AnimationTimer(app); SaveSettings(app); Redraw(app);
+}
+bool SetBubbleSize(App& app,int command) {
+    if (command<SizeFirst || command>=SizeFirst+5) return false;
+    app.config.bubble_size=BubbleSizes[command-SizeFirst];
+    if (app.config.display_mode=="bubble") Position(app);
+    SaveSettings(app); Redraw(app); return true;
 }
 DWORD WINAPI FetchThread(void* context) {
     auto& app=*static_cast<App*>(context);
@@ -125,18 +137,18 @@ void FinishFetch(App& app) {
     if (app.closing) DestroyWindow(app.hwnd); else Redraw(app);
 }
 void Text(HDC dc,const App& app,const std::wstring& value,int x,int y,int width,int height,int size,COLORREF color,bool bold=false,UINT alignment=DT_LEFT) {
-    HFONT font=CreateFontW(-Px(app,size),0,0,0,bold?FW_SEMIBOLD:FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
+    HFONT font=CreateFontW(-DrawPx(app,size),0,0,0,bold?FW_SEMIBOLD:FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,
         OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Microsoft YaHei UI");
     auto previous=SelectObject(dc,font); SetTextColor(dc,color);
-    RECT rect{Px(app,x),Px(app,y),Px(app,x+width),Px(app,y+height)};
+    RECT rect{DrawPx(app,x),DrawPx(app,y),DrawPx(app,x+width),DrawPx(app,y+height)};
     DrawTextW(dc,value.c_str(),-1,&rect,alignment|DT_SINGLELINE|DT_VCENTER|DT_END_ELLIPSIS|DT_NOPREFIX);
     SelectObject(dc,previous); DeleteObject(font);
 }
 void Fill(HDC dc,const App& app,int x,int y,int w,int h,COLORREF color,int radius=0) {
     HBRUSH brush=CreateSolidBrush(color);
     auto oldBrush=SelectObject(dc,brush), oldPen=SelectObject(dc,GetStockObject(NULL_PEN));
-    if (radius) RoundRect(dc,Px(app,x),Px(app,y),Px(app,x+w),Px(app,y+h),Px(app,radius),Px(app,radius));
-    else Rectangle(dc,Px(app,x),Px(app,y),Px(app,x+w),Px(app,y+h));
+    if (radius) RoundRect(dc,DrawPx(app,x),DrawPx(app,y),DrawPx(app,x+w),DrawPx(app,y+h),DrawPx(app,radius),DrawPx(app,radius));
+    else Rectangle(dc,DrawPx(app,x),DrawPx(app,y),DrawPx(app,x+w),DrawPx(app,y+h));
     SelectObject(dc,oldBrush); SelectObject(dc,oldPen); DeleteObject(brush);
 }
 void PeakLamp(HDC dc,const App& app,int x,int y,int radius,int textWidth,int size) {
@@ -147,18 +159,14 @@ void PeakLamp(HDC dc,const App& app,int x,int y,int radius,int textWidth,int siz
 void PaintWhale(HDC dc,App& app,int64_t elapsed) {
     elapsed=std::max<int64_t>(0,elapsed)%16000;
     const auto frame=WhaleAt(elapsed);
-    Fill(dc,app,6,31,60,12,RGB(20,39,66));
+    const int scale=DrawScale(app);
+    PaintOceanBackground(dc,scale,elapsed);
     const int saved=SaveDC(dc);
-    IntersectClipRect(dc,Px(app,6),Px(app,7),Px(app,66),Px(app,43));
-    app.whale.Draw(dc,static_cast<int>(std::lround(frame.x*app.scale/96)),
-        static_cast<int>(std::lround(frame.y*app.scale/96)),app.scale,frame.rotation,frame.facing_right);
+    IntersectClipRect(dc,DrawPx(app,6),DrawPx(app,7),DrawPx(app,66),DrawPx(app,43));
+    app.whale.Draw(dc,static_cast<int>(std::lround(frame.x*scale/96)),
+        static_cast<int>(std::lround(frame.y*scale/96)),scale,frame.rotation,frame.facing_right);
     RestoreDC(dc,saved);
-    HPEN pen=CreatePen(PS_SOLID,std::max(1,Px(app,1)),RGB(46,81,124));
-    auto oldPen=SelectObject(dc,pen);
-    MoveToEx(dc,Px(app,6),Px(app,31),nullptr);
-    for (int x=7;x<=66;++x)
-        LineTo(dc,Px(app,x),Px(app,31+static_cast<int>(std::lround(std::sin(x/6.0+elapsed/500.0)))));
-    SelectObject(dc,oldPen); DeleteObject(pen);
+    PaintOceanSurface(dc,scale,elapsed);
     if (frame.splash>0) {
         const int spread=static_cast<int>((1-frame.splash)*8),height=static_cast<int>(frame.splash*7);
         for (int side:{-1,1}) Fill(dc,app,static_cast<int>(frame.splash_x)+side*(4+spread),30-height,2,3,RGB(141,190,255),2);
@@ -273,6 +281,12 @@ void Menu(App& app,int x,int y) {
     AppendMenuW(menu,MF_STRING|(app.config.display_mode=="panel"?MF_CHECKED:0),Panel,L"完整面板");
     AppendMenuW(menu,MF_STRING|(app.config.display_mode=="bubble"?MF_CHECKED:0),Bubble,L"鲸鱼气泡");
     AppendMenuW(menu,MF_STRING|(app.config.display_mode=="taskbar"?MF_CHECKED:0),Taskbar,L"任务栏横条");
+    HMENU sizes=CreatePopupMenu();
+    if (sizes) {
+        for (int index=0;index<5;++index)
+            AppendMenuW(sizes,MF_STRING|(app.config.bubble_size==BubbleSizes[index]?MF_CHECKED:0),SizeFirst+index,SizeLabels[index]);
+        if (!AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(sizes),L"气泡大小")) DestroyMenu(sizes);
+    }
     AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
     AppendMenuW(menu,MF_STRING,Console,L"打开 DeepSeek 控制台");
     AppendMenuW(menu,MF_STRING|(app.busy?MF_GRAYED:0),Key,L"输入 / 更换 API Key…");
@@ -282,6 +296,7 @@ void Menu(App& app,int x,int y) {
     SetForegroundWindow(app.hwnd);
     const int choice=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,x,y,0,app.hwnd,nullptr);
     DestroyMenu(menu);
+    if (SetBubbleSize(app,choice)) return;
     switch (choice) {
     case Refresh: StartFetch(app,app.candidate); break;
     case Panel: Mode(app,"panel"); break;
@@ -307,6 +322,9 @@ LRESULT CALLBACK WindowProc(HWND hwnd,UINT message,WPARAM wparam,LPARAM lparam) 
     case WM_PAINT: Paint(*app); return 0;
     case WM_PRINTCLIENT: Paint(*app,reinterpret_cast<HDC>(wparam)); return 0;
     case WM_ERASEBKGND: return 1;
+    case WM_COMMAND:
+        if (!lparam && HIWORD(wparam)==0 && SetBubbleSize(*app,LOWORD(wparam))) return 0;
+        break;
     case SmokeFrame:
         if (app->smoke && wparam<=1 && lparam>=0 && lparam<=60000) {
             app->smokeElapsed=lparam; app->peak=wparam!=0; Redraw(*app); return 1;
